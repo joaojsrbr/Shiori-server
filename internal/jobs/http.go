@@ -50,7 +50,7 @@ func (h *Handler) EnqueueExtract(w http.ResponseWriter, r *http.Request) {
 
 	job := &queue.Job{
 		ID:             library.NewULID(),
-		IdempotencyKey: payload.URL, // Basic idempotency by URL
+		IdempotencyKey: library.NewULID(), // Allow re-extracting same URL
 		Type:           "extract_media",
 		Payload:        rawPayload,
 	}
