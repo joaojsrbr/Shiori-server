@@ -84,20 +84,86 @@ func TestProviderSnapshotRejectsUnknownSession(t *testing.T) {
 	}
 }
 
+func TestProviderWaitsForAutomaticChallenge(t *testing.T) {
+	if os.Getenv("SHIORI_BROWSER_INTEGRATION_TEST") != "1" {
+		t.Skip("set SHIORI_BROWSER_INTEGRATION_TEST=1 to run with a local Chrome or Edge installation")
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<!doctype html>
+<html>
+<head><title>Just a moment...</title></head>
+<body>
+	<form id="challenge-form">Performing security verification</form>
+	<script>
+		setTimeout(() => {
+			document.title = "Manga";
+			document.body.innerHTML = '<main data-ready="true">Challenge completed</main>';
+		}, 750);
+	</script>
+</body>
+</html>`)
+	}))
+	defer server.Close()
+
+	provider := New(t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	navigation, err := provider.Navigate(ctx, browser.NavigateRequest{URL: server.URL})
+	if err != nil {
+		t.Fatalf("Navigate() error = %v", err)
+	}
+	defer provider.CloseSession(context.Background(), navigation.SessionID)
+
+	snapshot, err := provider.Snapshot(ctx, navigation.SessionID)
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if snapshot.UserAction {
+		t.Fatal("Snapshot().UserAction = true after the automatic challenge completed")
+	}
+	if !strings.Contains(snapshot.HTML, "Challenge completed") {
+		t.Fatalf("Snapshot() did not refresh the DOM after the challenge: %s", snapshot.HTML)
+	}
+}
+
 func TestRequiresUserAction(t *testing.T) {
 	tests := []struct {
 		name string
-		html string
+		page renderedPage
 		want bool
 	}{
-		{name: "normal page", html: `<html><body>Manga</body></html>`, want: false},
-		{name: "cloudflare challenge", html: `<form id="challenge-form"><div class="cf-turnstile"></div></form>`, want: true},
-		{name: "challenge platform", html: `<script src="/cdn-cgi/challenge-platform/h/g/orchestrate"></script>`, want: true},
+		{
+			name: "normal page with cloudflare script",
+			page: renderedPage{
+				Title:    "Manga",
+				BodyText: "Chapter list",
+				HTML:     `<script src="/cdn-cgi/challenge-platform/h/g/orchestrate"></script>`,
+			},
+			want: false,
+		},
+		{
+			name: "visible challenge widget",
+			page: renderedPage{Title: "Manga", HasVisibleChallenge: true},
+			want: true,
+		},
+		{
+			name: "cloudflare challenge title",
+			page: renderedPage{Title: "Just a moment..."},
+			want: true,
+		},
+		{
+			name: "security verification text",
+			page: renderedPage{BodyText: "Performing security verification"},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := requiresUserAction(tt.html); got != tt.want {
+			if got := requiresUserAction(tt.page); got != tt.want {
 				t.Errorf("requiresUserAction() = %v, want %v", got, tt.want)
 			}
 		})

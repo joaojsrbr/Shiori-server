@@ -16,6 +16,16 @@ Adicione uma entrada por branch mesclada, da mais recente para a mais antiga.
 - Próximo passo:
 ```
 
+## 2026-07-30 — fix/cloudflare-challenge-detection
+
+- Objetivo: evitar `409 User Action Required` em páginas normais que apenas carregam scripts Cloudflare.
+- Resultado: a detecção passou a considerar título, texto renderizado e widgets visíveis, sem pesquisar marcadores dentro de scripts; desafios gerenciados recebem uma janela de 10 segundos para concluir antes do `409`.
+- Arquivos principais: `internal/platform/browser/chromedp/provider.go`, `internal/platform/browser/chromedp/browser_test.go`.
+- Contrato/migrations: sem alteração.
+- Verificações: testes unitários de classificação; testes de integração com Chrome para DOM normal e desafio automático; `go vet ./...`; `go test ./...`.
+- Decisões/ADRs: mantém ADR 0006; CAPTCHA ou desafio interativo persistente continua exigindo handoff humano, sem evasão.
+- Próximo passo: implementar API de handoff/retomada com janela visível para desafios realmente interativos.
+
 ## 2026-07-30 — fix/browser-real-snapshot
 
 - Objetivo: substituir o HTML provisório enviado ao NuExtract por uma captura real da página.

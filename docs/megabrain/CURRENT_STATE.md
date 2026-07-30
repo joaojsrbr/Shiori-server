@@ -25,7 +25,9 @@ Atualizado em: 2026-07-30
   `internal/platform/browser/`.
 - O provider chromedp mantém uma sessão ativa entre `Navigate` e `Snapshot`,
   captura o DOM já renderizado por JavaScript, URL final e assets, e sinaliza
-  páginas de desafio Cloudflare para interação humana.
+  desafios Cloudflare visíveis para interação humana. Scripts Cloudflare em
+  páginas normais não geram falso positivo, e desafios gerenciados recebem até
+  10 segundos para concluir automaticamente antes do estado de ação humana.
 - ADRs iniciais estão em `docs/adr/`.
 
 ## Artefatos locais
