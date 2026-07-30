@@ -78,3 +78,12 @@ func ErrorConflict(detail string) Problem {
 		Detail: detail,
 	}
 }
+
+// ErrorMethodNotAllowed returns a Problem representing a 405 Method Not Allowed error.
+func ErrorMethodNotAllowed(detail string) Problem {
+	return Problem{
+		Status: http.StatusMethodNotAllowed,
+		Title:  "Method Not Allowed",
+		Detail: detail,
+	}
+}

@@ -35,6 +35,14 @@ func New(addr string, logger *slog.Logger) *Server {
 		readyCh: make(chan struct{}),
 	}
 
+	// Custom JSON error handlers for unmatched routes
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		RespondError(w, ErrorNotFound("Endpoint not found."))
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		RespondError(w, ErrorMethodNotAllowed("HTTP method not allowed for this endpoint."))
+	})
+
 	// Global middleware stack
 	r.Use(middleware.RealIP)
 	r.Use(middleware.RequestID)
