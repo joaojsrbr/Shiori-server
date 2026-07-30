@@ -38,6 +38,7 @@ import (
 	"github.com/joaojsr/shiori-server/internal/platform/storage"
 	"github.com/joaojsr/shiori-server/internal/platform/storage/localfs"
 	"github.com/joaojsr/shiori-server/internal/platform/storage/s3fs"
+	"github.com/joaojsr/shiori-server/internal/worker"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -207,9 +208,19 @@ func runServe(args []string) error {
 	// In the future, migrations and other init steps happen before this.
 	srv.MarkReady()
 
-	// Graceful shutdown
+	// 6. Background Worker Pool
+	workerPool := worker.New(queueProvider, logger, 3) // Concurrency 3
+	workerPool.Register("mock_job", func(ctx context.Context, job *queue.Job) error {
+		logger.Info("Mock job processed!", "job_id", job.ID)
+		return nil
+	})
+
+	// Graceful shutdown context
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Start worker pool in background
+	go workerPool.Start(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {
