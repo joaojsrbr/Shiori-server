@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 // Profile identifies the infrastructure profile.
@@ -123,6 +125,10 @@ func Defaults() Config {
 // Load reads configuration from environment variables and applies flags.
 // It does not validate the configuration; call Validate() after Load().
 func Load(flags Flags) (Config, error) {
+	// Try loading .env file from the current directory.
+	// We ignore the error because the file is optional.
+	_ = godotenv.Load()
+
 	cfg := Defaults()
 
 	// Profile
