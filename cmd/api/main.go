@@ -21,9 +21,12 @@ import (
 	"github.com/joaojsr/shiori-server/api/openapi"
 	"github.com/joaojsr/shiori-server/internal/ai"
 	"github.com/joaojsr/shiori-server/internal/buildinfo"
+	"github.com/joaojsr/shiori-server/internal/extraction/nuextract"
+	"github.com/joaojsr/shiori-server/internal/jobs"
 	"github.com/joaojsr/shiori-server/internal/library"
 	libpostgres "github.com/joaojsr/shiori-server/internal/library/postgres"
 	libsqlite "github.com/joaojsr/shiori-server/internal/library/sqlite"
+	"github.com/joaojsr/shiori-server/internal/platform/ai/lmstudio"
 	"github.com/joaojsr/shiori-server/internal/platform/browser"
 	"github.com/joaojsr/shiori-server/internal/platform/browser/chromedp"
 	"github.com/joaojsr/shiori-server/internal/platform/config"
@@ -195,6 +198,7 @@ func runServe(args []string) error {
 	// Register API routes
 	libHandler := library.NewHandler(mediaRepo)
 	aiHandler := ai.NewHandler(cfg.AI)
+	jobsHandler := jobs.NewHandler(queueProvider)
 
 	srv.Router().Route("/api/v1", func(r chi.Router) {
 		r.Get("/openapi.yaml", openapi.Handler())
@@ -202,6 +206,7 @@ func runServe(args []string) error {
 
 		libHandler.RegisterRoutes(r)
 		aiHandler.RegisterRoutes(r)
+		jobsHandler.RegisterRoutes(r)
 	})
 
 	// Mark ready after initialization is complete.
@@ -210,10 +215,13 @@ func runServe(args []string) error {
 
 	// 6. Background Worker Pool
 	workerPool := worker.New(queueProvider, logger, 3) // Concurrency 3
-	workerPool.Register("mock_job", func(ctx context.Context, job *queue.Job) error {
-		logger.Info("Mock job processed!", "job_id", job.ID)
-		return nil
-	})
+
+	// Setup Extraction Provider
+	lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
+	extProvider := nuextract.New(lmClient, cfg.AI.ModelDefault)
+
+	extractHandler := jobs.NewExtractHandler(browserProvider, extProvider, mediaRepo)
+	workerPool.Register("extract_media", extractHandler)
 
 	// Graceful shutdown context
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
