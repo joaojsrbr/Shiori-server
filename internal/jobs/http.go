@@ -55,6 +55,15 @@ func (h *Handler) EnqueueExtract(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.q.Enqueue(r.Context(), job); err != nil {
+		if errors.Is(err, queue.ErrConflict) {
+			httpserver.RespondError(w, httpserver.Problem{
+				Status: http.StatusConflict,
+				Title:  "Conflict",
+				Detail: "A job for this URL is already enqueued.",
+			})
+			return
+		}
+
 		httpserver.RespondError(w, httpserver.Problem{
 			Status: http.StatusInternalServerError,
 			Title:  "Queue Error",

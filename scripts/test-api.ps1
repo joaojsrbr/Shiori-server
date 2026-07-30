@@ -48,3 +48,16 @@ try {
     Write-Warning "Falha ao disparar o Job de extração."
     Write-Warning $_.Exception.Message
 }
+
+Write-Host "`n=========================================" -ForegroundColor Cyan
+Write-Host "4. Listando Biblioteca (/api/v1/media)" -ForegroundColor Cyan
+try {
+    $media = Invoke-RestMethod -Uri "$BaseUrl/api/v1/media" -Method Get
+    if ($media.Count -eq 0) {
+        Write-Host "Biblioteca vazia." -ForegroundColor Yellow
+    } else {
+        $media | ConvertTo-Json -Depth 5 | Write-Host -ForegroundColor Green
+    }
+} catch {
+    Write-Warning "Falha ao listar a biblioteca."
+}

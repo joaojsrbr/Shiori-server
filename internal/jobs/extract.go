@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -96,6 +97,7 @@ func NewExtractHandler(
 			if err != nil {
 				return fmt.Errorf("failed to save media to database: %w", err)
 			}
+			slog.Info("successfully extracted and saved media", "title", createReq.Title, "raw_json", string(res.RawJSON))
 		} else {
 			return fmt.Errorf("unsupported target for persistence: %s", payload.Target)
 		}
