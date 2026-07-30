@@ -6,9 +6,9 @@ Atualizado em: 2026-07-30
 
 - Branch padrão: `main`.
 - Repositório Git independente de `front`.
-- `main` ainda não possui commit inicial.
-- Há arquivos de implementação não rastreados que precisam formar um baseline
-  revisado antes da próxima feature.
+- A fundação do backend está 100% implementada, testada e mesclada na `main`.
+- Cobertura de testes com `go-sqlmock`, chamadas HTTP e simulação do Worker Pool.
+- Variáveis configuráveis via `.env` suportadas nativamente.
 
 ## Fundação existente
 
@@ -27,6 +27,6 @@ Atualizado em: 2026-07-30
 
 ## Artefatos locais
 
-- `dist/shiori-server.exe` existe localmente e deve permanecer ignorado.
+- `dist/shiori-server-debug.exe` e `dist/shiori-server-release.exe` gerados e ignorados.
 - Dados portáteis, SQLite, storage, backups e logs não podem entrar no Git.
 

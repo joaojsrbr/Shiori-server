@@ -2,17 +2,13 @@
 
 ## Próximo objetivo recomendado
 
-Revisar a fundação existente, executar testes e criar o primeiro commit
-baseline do backend antes de novas branches.
+Iniciar o desenvolvimento do Frontend (Flutter). O Backend atingiu maturidade de fundação (Pipeline de NuExtract, Worker Pool assíncrono, Repositórios e Testes concluídos).
 
 ## Sequência
 
-1. revisar arquivos não rastreados;
-2. confirmar `.gitignore`;
-3. executar `gofmt`, `go vet` e `go test`;
-4. executar smoke test do `.exe` se o build estiver pronto;
-5. criar `chore: establish backend baseline`;
-6. abrir a próxima branch a partir de `main`.
+1. Navegar para `front/`;
+2. Consultar o MegaBrain do Frontend (`front/docs/megabrain/README.md`);
+3. Iniciar a UI (Gerenciamento de Estado, Roteamento) baseada no `openapi/shiori.yaml`.
 
 ## Atenções
 
