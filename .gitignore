@@ -1,0 +1,54 @@
+# Go build artifacts
+/bin/
+/dist/
+/tmp/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+
+# Portable runtime data
+/data/
+/storage/
+/backups/
+/logs/
+*.db
+*.db-shm
+*.db-wal
+
+# Go dependencies and local workspaces
+/vendor/
+go.work
+go.work.sum
+
+# Browser worker and Node.js
+node_modules/
+.npm/
+.pnpm-store/
+playwright-report/
+test-results/
+blob-report/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Editors
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# Operating systems
+.DS_Store
+Thumbs.db
+

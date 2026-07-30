@@ -1,0 +1,117 @@
+openapi: 3.1.0
+info:
+  title: Shiori API
+  description: Shiori backend server API for media management and extraction.
+  version: 1.0.0
+servers:
+  - url: /
+    description: Current server
+paths:
+  /health/live:
+    get:
+      summary: Liveness probe
+      operationId: getHealthLive
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Server is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: alive
+                required:
+                  - status
+
+  /health/ready:
+    get:
+      summary: Readiness probe
+      operationId: getHealthReady
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Server is ready to accept requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+                required:
+                  - status
+        '503':
+          description: Server is not ready
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /api/v1/capabilities:
+    get:
+      summary: Get server capabilities
+      operationId: getCapabilities
+      tags:
+        - System
+      responses:
+        '200':
+          description: Server capabilities
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilitiesResponse'
+
+components:
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details for HTTP APIs
+      properties:
+        type:
+          type: string
+          format: uri
+          default: "about:blank"
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri
+      required:
+        - title
+        - status
+
+    Capability:
+      type: object
+      properties:
+        name:
+          type: string
+        available:
+          type: boolean
+      required:
+        - name
+        - available
+
+    CapabilitiesResponse:
+      type: object
+      properties:
+        profile:
+          type: string
+          enum: [portable, docker]
+        capabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Capability'
+      required:
+        - profile
+        - capabilities
