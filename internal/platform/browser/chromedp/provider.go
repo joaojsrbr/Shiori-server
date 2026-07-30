@@ -29,6 +29,17 @@ type session struct {
 	status     int
 }
 
+type renderedPage struct {
+	HTML                string   `json:"-"`
+	FinalURL            string   `json:"-"`
+	Assets              []string `json:"-"`
+	Title               string   `json:"title"`
+	BodyText            string   `json:"bodyText"`
+	HasVisibleChallenge bool     `json:"hasVisibleChallenge"`
+}
+
+const automaticChallengeWait = 10 * time.Second
+
 // New creates the provider.
 // baseDir is used for isolated browser profiles.
 func New(baseDir string) *Provider {
@@ -145,53 +156,120 @@ func (p *Provider) Snapshot(ctx context.Context, sessionID string) (*browser.Pag
 		cancelSnapshot()
 	}()
 
-	var (
-		html     string
-		finalURL string
-		assets   []string
-	)
-
-	err := chromedp.Run(snapshotCtx,
-		chromedp.OuterHTML("html", &html, chromedp.ByQuery),
-		chromedp.Location(&finalURL),
-		chromedp.Evaluate(`Array.from(new Set(
-			Array.from(document.querySelectorAll("img[src],source[src],video[src],audio[src]"))
-				.map((element) => element.currentSrc || element.src)
-				.filter(Boolean)
-		))`, &assets),
-	)
+	page, err := captureRenderedPage(snapshotCtx)
 	if err != nil {
 		return nil, fmt.Errorf("chromedp: capture snapshot: %w", err)
 	}
-	if strings.TrimSpace(html) == "" {
+	if requiresUserAction(page) {
+		page, err = waitForAutomaticChallenge(snapshotCtx, page)
+		if err != nil {
+			return nil, fmt.Errorf("chromedp: wait for automatic challenge: %w", err)
+		}
+	}
+	if strings.TrimSpace(page.HTML) == "" {
 		return nil, errors.New("chromedp: captured an empty document")
 	}
 
 	return &browser.PageSnapshot{
-		HTML:       html,
-		FinalURL:   finalURL,
+		HTML:       page.HTML,
+		FinalURL:   page.FinalURL,
 		Status:     activeSession.status,
 		Headers:    make(map[string]string),
-		Assets:     assets,
-		UserAction: requiresUserAction(html),
+		Assets:     page.Assets,
+		UserAction: requiresUserAction(page),
 	}, nil
 }
 
-func requiresUserAction(html string) bool {
-	content := strings.ToLower(html)
-	challengeMarkers := []string{
-		"cf-chl-",
-		"cf-turnstile",
-		"/cdn-cgi/challenge-platform/",
-		"challenge-form",
+func captureRenderedPage(ctx context.Context) (renderedPage, error) {
+	var page renderedPage
+	err := chromedp.Run(ctx,
+		chromedp.OuterHTML("html", &page.HTML, chromedp.ByQuery),
+		chromedp.Location(&page.FinalURL),
+		chromedp.Evaluate(`Array.from(new Set(
+			Array.from(document.querySelectorAll("img[src],source[src],video[src],audio[src]"))
+				.map((element) => element.currentSrc || element.src)
+				.filter(Boolean)
+		))`, &page.Assets),
+		chromedp.Evaluate(`(() => {
+			const isVisible = (element) => {
+				const style = window.getComputedStyle(element);
+				const rect = element.getBoundingClientRect();
+				return style.display !== "none"
+					&& style.visibility !== "hidden"
+					&& Number(style.opacity || "1") > 0
+					&& rect.width > 0
+					&& rect.height > 0;
+			};
+			const selectors = [
+				"#challenge-form",
+				".cf-turnstile",
+				"iframe[src*='challenges.cloudflare.com']",
+				"form[action*='/cdn-cgi/challenge-platform/']"
+			];
+			return {
+				title: document.title || "",
+				bodyText: (document.body && document.body.innerText || "").slice(0, 8192),
+				hasVisibleChallenge: selectors.some((selector) =>
+					Array.from(document.querySelectorAll(selector)).some(isVisible)
+				)
+			};
+		})()`, &page),
+	)
+	return page, err
+}
+
+func waitForAutomaticChallenge(ctx context.Context, current renderedPage) (renderedPage, error) {
+	timer := time.NewTimer(automaticChallengeWait)
+	defer timer.Stop()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for requiresUserAction(current) {
+		select {
+		case <-ctx.Done():
+			return renderedPage{}, ctx.Err()
+		case <-timer.C:
+			return current, nil
+		case <-ticker.C:
+			next, err := captureRenderedPage(ctx)
+			if err != nil {
+				return renderedPage{}, err
+			}
+			current = next
+		}
+	}
+	return current, nil
+}
+
+func requiresUserAction(page renderedPage) bool {
+	if page.HasVisibleChallenge {
+		return true
+	}
+
+	title := strings.ToLower(strings.TrimSpace(page.Title))
+	bodyText := strings.ToLower(page.BodyText)
+	titleMarkers := []string{
 		"just a moment...",
 		"attention required! | cloudflare",
 	}
-	for _, marker := range challengeMarkers {
-		if strings.Contains(content, marker) {
+	for _, marker := range titleMarkers {
+		if strings.Contains(title, marker) {
 			return true
 		}
 	}
+
+	bodyMarkers := []string{
+		"performing security verification",
+		"verify you are human",
+		"checking your browser",
+		"enable javascript and cookies to continue",
+	}
+	for _, marker := range bodyMarkers {
+		if strings.Contains(bodyText, marker) {
+			return true
+		}
+	}
+
 	return false
 }
 
