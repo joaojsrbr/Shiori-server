@@ -20,6 +20,9 @@ import (
 
 	"github.com/joaojsr/shiori-server/api/openapi"
 	"github.com/joaojsr/shiori-server/internal/buildinfo"
+	"github.com/joaojsr/shiori-server/internal/library"
+	libpostgres "github.com/joaojsr/shiori-server/internal/library/postgres"
+	libsqlite "github.com/joaojsr/shiori-server/internal/library/sqlite"
 	"github.com/joaojsr/shiori-server/internal/platform/browser"
 	"github.com/joaojsr/shiori-server/internal/platform/browser/chromedp"
 	"github.com/joaojsr/shiori-server/internal/platform/config"
@@ -100,6 +103,7 @@ func runServe(args []string) error {
 		queueProvider   queue.Provider
 		storageProvider storage.Provider
 		browserProvider browser.Provider
+		mediaRepo       library.MediaRepository
 	)
 
 	switch cfg.Profile {
@@ -133,6 +137,9 @@ func runServe(args []string) error {
 
 		// 4. Browser
 		browserProvider = chromedp.New(filepath.Join(dataFolder, "browser-profiles"))
+
+		// 5. Library Repositories
+		mediaRepo = libsqlite.NewRepository(dbProvider.DB())
 
 	case config.ProfileDocker:
 		// 1. PostgreSQL Database
@@ -172,6 +179,9 @@ func runServe(args []string) error {
 		// For now, no browser capability in API container.
 		// Playwright worker will handle browser tasks.
 
+		// 5. Library Repositories
+		mediaRepo = libpostgres.NewRepository(dbProvider.DB())
+
 	default:
 		return fmt.Errorf("unknown profile: %s", cfg.Profile)
 	}
@@ -181,9 +191,13 @@ func runServe(args []string) error {
 	srv.SetTimeouts(cfg.Server.ReadTimeout, cfg.Server.WriteTimeout, cfg.Server.IdleTimeout)
 
 	// Register API routes
+	libHandler := library.NewHandler(mediaRepo)
+
 	srv.Router().Route("/api/v1", func(r chi.Router) {
 		r.Get("/openapi.yaml", openapi.Handler())
 		r.Get("/capabilities", handleCapabilities(cfg, dbProvider, queueProvider, storageProvider, browserProvider))
+
+		libHandler.RegisterRoutes(r)
 	})
 
 	// Mark ready after initialization is complete.
