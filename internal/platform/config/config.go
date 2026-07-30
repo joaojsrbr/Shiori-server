@@ -34,6 +34,15 @@ type Config struct {
 	Postgres PostgresConfig
 	Valkey   ValkeyConfig
 	MinIO    MinIOConfig
+	AI       AIConfig
+}
+
+type AIConfig struct {
+	LMStudioBaseURL string
+	Token           string
+	ModelTiny       string
+	ModelDefault    string
+	ModelQuality    string
 }
 
 type PostgresConfig struct {
@@ -102,6 +111,12 @@ func Defaults() Config {
 			Bucket:    "shiori",
 			UseSSL:    false,
 		},
+		AI: AIConfig{
+			LMStudioBaseURL: "http://127.0.0.1:1234",
+			ModelTiny:       "nuextract-1.5-tiny",
+			ModelDefault:    "nuextract3@q4_k_m",
+			ModelQuality:    "nuextract3@q5_k_m",
+		},
 	}
 }
 
@@ -161,6 +176,23 @@ func Load(flags Flags) (Config, error) {
 	if v := envOr("SHIORI_LOG_LEVEL", ""); v != "" {
 		cfg.Log.Level = strings.ToLower(v)
 	}
+	// AI Overrides
+	if v := envOr("SHIORI_LMSTUDIO_BASE_URL", ""); v != "" {
+		cfg.AI.LMStudioBaseURL = v
+	}
+	if v := envOr("SHIORI_LMSTUDIO_API_TOKEN", ""); v != "" {
+		cfg.AI.Token = v
+	}
+	if v := envOr("SHIORI_MODEL_EXTRACT_TINY", ""); v != "" {
+		cfg.AI.ModelTiny = v
+	}
+	if v := envOr("SHIORI_MODEL_EXTRACT_DEFAULT", ""); v != "" {
+		cfg.AI.ModelDefault = v
+	}
+	if v := envOr("SHIORI_MODEL_EXTRACT_QUALITY", ""); v != "" {
+		cfg.AI.ModelQuality = v
+	}
+
 	if flags.LogLevel != "" {
 		cfg.Log.Level = strings.ToLower(flags.LogLevel)
 	}
