@@ -214,6 +214,18 @@ func runServe(args []string) error {
 		jobsHandler.RegisterRoutes(r)
 	})
 
+	// Debug-only endpoints: run extraction synchronously and return AI output.
+	// Only registered when log level is "debug".
+	if cfg.Log.Level == "debug" && browserProvider != nil {
+		lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
+		debugExtProvider := nuextract.New(lmClient, cfg.AI.ModelDefault)
+
+		srv.Router().Route("/api/v1/debug", func(r chi.Router) {
+			r.Post("/extract", jobs.HandleDebugExtract(browserProvider, debugExtProvider, mediaRepo))
+		})
+		logger.Warn("debug endpoints enabled", "path", "/api/v1/debug/extract")
+	}
+
 	// Mark ready after initialization is complete.
 	// In the future, migrations and other init steps happen before this.
 	srv.MarkReady()

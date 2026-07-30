@@ -62,3 +62,20 @@ try {
     Write-Warning "Falha ao listar a biblioteca."
     Write-Warning $_.Exception.Message
 }
+
+Write-Host "`n=========================================" -ForegroundColor Cyan
+Write-Host "5. Debug: Extração Síncrona com saída da IA (/api/v1/debug/extract)" -ForegroundColor Cyan
+Write-Host "   ATENÇÃO: Esse endpoint é lento (~30s+). Só funciona em debug." -ForegroundColor Yellow
+try {
+    $body = @{
+        url = "https://lycantoons.com/series/defensor-da-dungeon"
+        target = "media"
+    } | ConvertTo-Json
+
+    $debugResponse = Invoke-RestMethod -Uri "$BaseUrl/api/v1/debug/extract" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 120
+    Write-Host "--- Saída da IA ---" -ForegroundColor Magenta
+    $debugResponse | ConvertTo-Json -Depth 10 | Write-Host -ForegroundColor Green
+} catch {
+    Write-Warning "Falha no debug/extract (endpoint pode não estar ativo em release)."
+    Write-Warning $_.Exception.Message
+}
