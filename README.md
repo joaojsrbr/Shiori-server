@@ -14,8 +14,4 @@ back/
 ├── internal/
 ├── migrations/
 ├── api/openapi/
-└── workers/browser/
 ```
-
-O módulo Go ainda não foi inicializado. Defina o module path como uma decisão
-explícita na primeira entrega, em vez de usar um caminho provisório.

@@ -22,6 +22,7 @@ Implemente uma fatia vertical pequena por vez. Antes de escrever código:
 4. aguarde aprovação somente se houver escolha irreversível ou falta de
    informação que altere materialmente o resultado;
 5. implemente, formate, analise, teste e relate evidências reais.
+6. **OBRIGATÓRIO:** Sempre escreva arquivos `_test.go` para toda e qualquer nova funcionalidade, garantindo a criação de mocks quando necessário para que não existam pacotes com `[no test files]`.
 
 Não gere o produto inteiro em uma única execução.
 
