@@ -9,8 +9,10 @@ Leia obrigatoriamente:
 - `@/docs/megabrain/README.md` e sua ordem de leitura;
 - ADRs relacionados.
 
-Toda implementação deve usar branch própria e terminar com merge local
-`--no-ff` em `main`, conforme `AGENTS.md`.
+Toda implementação deve ser dividida em blocos pequenos, cada um em branch
+própria mesclada `--no-ff` na branch da feature e removida em seguida; a
+feature só é mesclada `--no-ff` em `main` depois que todos os blocos foram
+integrados, conforme `AGENTS.md`.
 
 ## Limites
 
