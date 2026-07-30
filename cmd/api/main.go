@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/joaojsr/shiori-server/api/openapi"
+	"github.com/joaojsr/shiori-server/internal/ai"
 	"github.com/joaojsr/shiori-server/internal/buildinfo"
 	"github.com/joaojsr/shiori-server/internal/library"
 	libpostgres "github.com/joaojsr/shiori-server/internal/library/postgres"
@@ -192,12 +193,14 @@ func runServe(args []string) error {
 
 	// Register API routes
 	libHandler := library.NewHandler(mediaRepo)
+	aiHandler := ai.NewHandler(cfg.AI)
 
 	srv.Router().Route("/api/v1", func(r chi.Router) {
 		r.Get("/openapi.yaml", openapi.Handler())
 		r.Get("/capabilities", handleCapabilities(cfg, dbProvider, queueProvider, storageProvider, browserProvider))
 
 		libHandler.RegisterRoutes(r)
+		aiHandler.RegisterRoutes(r)
 	})
 
 	// Mark ready after initialization is complete.
@@ -248,7 +251,7 @@ func handleCapabilities(cfg config.Config, db database.Provider, q queue.Provide
 				{Name: "queue", Available: q != nil},
 				{Name: "storage", Available: st != nil},
 				{Name: "browser", Available: bp != nil && bp.IsAvailable()},
-				{Name: "ai_extract", Available: false}, // Not yet implemented
+				{Name: "ai_extract", Available: cfg.AI.LMStudioBaseURL != ""},
 			},
 		}
 		httpserver.RespondJSON(w, http.StatusOK, caps)
