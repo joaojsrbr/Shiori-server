@@ -38,7 +38,7 @@ func (p *provider) Migrate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("creating migrate instance: %w", err)
 	}
-	defer m.Close()
+	defer sourceDriver.Close()
 
 	slog.Info("running sqlite migrations")
 	err = m.Up()
