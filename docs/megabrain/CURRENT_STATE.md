@@ -23,6 +23,9 @@ Atualizado em: 2026-07-30
 - Filesystem local está em `internal/platform/storage/localfs/`.
 - Browser provider e adapter chromedp estão em
   `internal/platform/browser/`.
+- O provider chromedp mantém uma sessão ativa entre `Navigate` e `Snapshot`,
+  captura o DOM já renderizado por JavaScript, URL final e assets, e sinaliza
+  páginas de desafio Cloudflare para interação humana.
 - ADRs iniciais estão em `docs/adr/`.
 
 ## Artefatos locais
