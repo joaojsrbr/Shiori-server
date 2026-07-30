@@ -178,6 +178,45 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /api/v1/jobs/extract:
+    post:
+      summary: Enqueue an extraction job
+      operationId: extractJob
+      tags:
+        - Jobs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  format: uri
+                target:
+                  type: string
+                  enum: [media, chapter_list]
+              required:
+                - url
+                - target
+      responses:
+        '202':
+          description: Job enqueued successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+        '400':
+          description: Invalid request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
 components:
   schemas:
     Problem:
