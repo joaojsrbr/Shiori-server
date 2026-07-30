@@ -59,9 +59,11 @@ func (m *mockMediaRepoExtract) Create(ctx context.Context, req library.MediaCrea
 	m.SavedTitle = req.Title
 	return &library.Media{}, nil
 }
-func (m *mockMediaRepoExtract) GetByID(ctx context.Context, id string) (*library.Media, error) { return nil, nil }
+func (m *mockMediaRepoExtract) GetByID(ctx context.Context, id string) (*library.Media, error) {
+	return nil, nil
+}
 func (m *mockMediaRepoExtract) List(ctx context.Context) ([]*library.Media, error) { return nil, nil }
-func (m *mockMediaRepoExtract) Delete(ctx context.Context, id string) error { return nil }
+func (m *mockMediaRepoExtract) Delete(ctx context.Context, id string) error        { return nil }
 
 func TestExtractHandler_Success(t *testing.T) {
 	b := &mockBrowserProvider{HTMLReturn: "<html><body>Content</body></html>"}

@@ -3,12 +3,12 @@ module github.com/joaojsr/shiori-server
 go 1.26.5
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/chromedp/chromedp v0.16.0
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/redis/go-redis/v9 v9.21.0
