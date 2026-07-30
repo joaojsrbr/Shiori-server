@@ -60,4 +60,5 @@ try {
     }
 } catch {
     Write-Warning "Falha ao listar a biblioteca."
+    Write-Warning $_.Exception.Message
 }

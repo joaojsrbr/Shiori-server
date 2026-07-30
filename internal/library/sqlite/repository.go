@@ -77,10 +77,11 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*library.Media, er
 
 	var m library.Media
 	var altTitles, authors, artists, genres string
+	var creStr, updStr string
 
 	err := row.Scan(
 		&m.ID, &m.Type, &m.Title, &altTitles, &m.Description, &m.CoverURL,
-		&authors, &artists, &m.Status, &genres, &m.CreatedAt, &m.UpdatedAt,
+		&authors, &artists, &m.Status, &genres, &creStr, &updStr,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -108,6 +109,9 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*library.Media, er
 		m.Genres = []string{}
 	}
 
+	m.CreatedAt, _ = time.Parse(time.RFC3339, creStr)
+	m.UpdatedAt, _ = time.Parse(time.RFC3339, updStr)
+
 	return &m, nil
 }
 
@@ -131,10 +135,11 @@ func (r *Repository) List(ctx context.Context) ([]*library.Media, error) {
 	for rows.Next() {
 		var m library.Media
 		var altTitles, authors, artists, genres string
+		var creStr, updStr string
 
 		if err := rows.Scan(
 			&m.ID, &m.Type, &m.Title, &altTitles, &m.Description, &m.CoverURL,
-			&authors, &artists, &m.Status, &genres, &m.CreatedAt, &m.UpdatedAt,
+			&authors, &artists, &m.Status, &genres, &creStr, &updStr,
 		); err != nil {
 			return nil, fmt.Errorf("scanning media row: %w", err)
 		}
@@ -156,6 +161,9 @@ func (r *Repository) List(ctx context.Context) ([]*library.Media, error) {
 		if m.Genres == nil {
 			m.Genres = []string{}
 		}
+
+		m.CreatedAt, _ = time.Parse(time.RFC3339, creStr)
+		m.UpdatedAt, _ = time.Parse(time.RFC3339, updStr)
 
 		results = append(results, &m)
 	}
