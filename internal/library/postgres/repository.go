@@ -29,23 +29,38 @@ func (r *Repository) Create(ctx context.Context, req library.MediaCreateRequest)
 
 	query := `
 		INSERT INTO media (
-			id, type, title, alternative_titles, description, cover_url,
+			id, source_url, type, title, alternative_titles, description, cover_url,
 			authors, artists, status, genres, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 		)
+		ON CONFLICT(source_url) DO UPDATE SET
+			type = EXCLUDED.type,
+			title = EXCLUDED.title,
+			alternative_titles = EXCLUDED.alternative_titles,
+			description = EXCLUDED.description,
+			cover_url = EXCLUDED.cover_url,
+			authors = EXCLUDED.authors,
+			artists = EXCLUDED.artists,
+			status = EXCLUDED.status,
+			genres = EXCLUDED.genres,
+			updated_at = EXCLUDED.updated_at
+		RETURNING id, created_at
 	`
 
-	_, err := r.db.ExecContext(ctx, query,
-		id, req.Type, req.Title, string(altTitles), req.Description, req.CoverURL,
-		string(authors), string(artists), req.Status, string(genres), now, now,
-	)
+	var returnedID string
+	var returnedCreatedAt time.Time
+	err := r.db.QueryRowContext(ctx, query,
+		id, req.SourceURL, req.Type, req.Title, altTitles, req.Description, req.CoverURL,
+		authors, artists, req.Status, genres, now, now,
+	).Scan(&returnedID, &returnedCreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("inserting media: %w", err)
 	}
 
 	return &library.Media{
-		ID:                id,
+		ID:                returnedID,
+		SourceURL:         req.SourceURL,
 		Type:              req.Type,
 		Title:             req.Title,
 		AlternativeTitles: req.AlternativeTitles,
@@ -55,7 +70,7 @@ func (r *Repository) Create(ctx context.Context, req library.MediaCreateRequest)
 		Artists:           req.Artists,
 		Status:            req.Status,
 		Genres:            req.Genres,
-		CreatedAt:         now,
+		CreatedAt:         returnedCreatedAt,
 		UpdatedAt:         now,
 	}, nil
 }
@@ -63,7 +78,7 @@ func (r *Repository) Create(ctx context.Context, req library.MediaCreateRequest)
 func (r *Repository) GetByID(ctx context.Context, id string) (*library.Media, error) {
 	query := `
 		SELECT 
-			id, type, title, alternative_titles, description, cover_url,
+			id, source_url, type, title, alternative_titles, description, cover_url,
 			authors, artists, status, genres, created_at, updated_at
 		FROM media
 		WHERE id = $1
@@ -75,7 +90,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*library.Media, er
 	var altTitles, authors, artists, genres string
 
 	err := row.Scan(
-		&m.ID, &m.Type, &m.Title, &altTitles, &m.Description, &m.CoverURL,
+		&m.ID, &m.SourceURL, &m.Type, &m.Title, &altTitles, &m.Description, &m.CoverURL,
 		&authors, &artists, &m.Status, &genres, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if err != nil {
@@ -109,7 +124,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*library.Media, er
 func (r *Repository) List(ctx context.Context) ([]*library.Media, error) {
 	query := `
 		SELECT 
-			id, type, title, alternative_titles, description, cover_url,
+			id, source_url, type, title, alternative_titles, description, cover_url,
 			authors, artists, status, genres, created_at, updated_at
 		FROM media
 		ORDER BY created_at DESC
@@ -128,7 +143,7 @@ func (r *Repository) List(ctx context.Context) ([]*library.Media, error) {
 		var altTitles, authors, artists, genres string
 
 		if err := rows.Scan(
-			&m.ID, &m.Type, &m.Title, &altTitles, &m.Description, &m.CoverURL,
+			&m.ID, &m.SourceURL, &m.Type, &m.Title, &altTitles, &m.Description, &m.CoverURL,
 			&authors, &artists, &m.Status, &genres, &m.CreatedAt, &m.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanning media row: %w", err)

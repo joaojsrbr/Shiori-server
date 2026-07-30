@@ -33,6 +33,7 @@ const (
 // Media represents a canonical media item in the library.
 type Media struct {
 	ID                string      `json:"id"`
+	SourceURL         string      `json:"source_url"`
 	Type              MediaType   `json:"type"`
 	Title             string      `json:"title"`
 	AlternativeTitles []string    `json:"alternative_titles"`
@@ -48,6 +49,7 @@ type Media struct {
 
 // MediaCreateRequest holds data to create a new Media.
 type MediaCreateRequest struct {
+	SourceURL         string      `json:"source_url"`
 	Type              MediaType   `json:"type"`
 	Title             string      `json:"title"`
 	AlternativeTitles []string    `json:"alternative_titles"`

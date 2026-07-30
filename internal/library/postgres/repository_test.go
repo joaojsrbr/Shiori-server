@@ -20,6 +20,7 @@ func TestRepository_Create(t *testing.T) {
 	repo := postgres.NewRepository(db)
 
 	req := library.MediaCreateRequest{
+		SourceURL:         "https://lycantoons.com/series/defensor-da-dungeon",
 		Type:              "manga",
 		Title:             "Defensor da Dungeon",
 		AlternativeTitles: []string{},
@@ -31,22 +32,22 @@ func TestRepository_Create(t *testing.T) {
 		Genres:            []string{},
 	}
 
-	mock.ExpectExec("INSERT INTO media").
+	mock.ExpectQuery("INSERT INTO media").
 		WithArgs(
-			sqlmock.AnyArg(), // id
-			req.Type,
-			req.Title,
-			"[]",
-			req.Description,
-			req.CoverURL,
-			"[]",
-			"[]",
-			req.Status,
-			"[]",
-			sqlmock.AnyArg(), // created_at
-			sqlmock.AnyArg(), // updated_at
-		).
-		WillReturnResult(sqlmock.NewResult(1, 1))
+			sqlmock.AnyArg(),
+			"https://lycantoons.com/series/defensor-da-dungeon",
+			library.MediaTypeManga,
+			"Defensor da Dungeon",
+			sqlmock.AnyArg(),
+			"Teste via sqlmock",
+			"https://lycantoons.com/series/defensor-da-dungeon",
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			library.StatusOngoing,
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+		).WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow("test-id", time.Now().UTC()))
 
 	media, err := repo.Create(context.Background(), req)
 	if err != nil {
@@ -72,22 +73,21 @@ func TestRepository_GetByID(t *testing.T) {
 	repo := postgres.NewRepository(db)
 
 	rows := sqlmock.NewRows([]string{
-		"id", "type", "title", "alternative_titles", "description", "cover_url",
+		"id", "source_url", "type", "title", "alternative_titles", "description", "cover_url",
 		"authors", "artists", "status", "genres", "created_at", "updated_at",
 	}).AddRow(
-		"ulid-123", "manga", "Defensor da Dungeon", "[]", "Teste", "https://lycantoons.com/series/defensor-da-dungeon",
-		"[]", "[]", "ongoing", "[]", time.Now(), time.Now(),
+		"test-id", "https://lycantoons.com", "manga", "Defensor da Dungeon", []byte("[]"), "Teste via sqlmock", "cover",
+		[]byte("[]"), []byte("[]"), "ongoing", []byte("[]"), time.Now(), time.Now(),
 	)
 
 	mock.ExpectQuery("SELECT (.+) FROM media WHERE id = \\$1").
-		WithArgs("ulid-123").
+		WithArgs("test-id").
 		WillReturnRows(rows)
 
-	media, err := repo.GetByID(context.Background(), "ulid-123")
+	media, err := repo.GetByID(context.Background(), "test-id")
 	if err != nil {
-		t.Errorf("error was not expected: %s", err)
+		t.Fatalf("error was not expected: %v", err)
 	}
-
 	if media == nil || media.Title != "Defensor da Dungeon" {
 		t.Errorf("expected media 'Defensor da Dungeon', got %v", media)
 	}

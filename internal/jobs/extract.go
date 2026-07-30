@@ -91,6 +91,7 @@ func NewExtractHandler(
 			if err := json.Unmarshal(res.RawJSON, &createReq); err != nil {
 				return fmt.Errorf("failed to unmarshal extracted JSON to MediaCreateRequest: %w", err)
 			}
+			createReq.SourceURL = payload.URL
 
 			// Save to repo
 			_, err := repo.Create(ctx, createReq)

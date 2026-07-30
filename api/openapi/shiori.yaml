@@ -271,6 +271,9 @@ components:
       properties:
         id:
           type: string
+        source_url:
+          type: string
+          format: uri
         type:
           type: string
           enum: [manga, manhwa, comic, novel, anime, unknown]
@@ -320,6 +323,9 @@ components:
     MediaCreateRequest:
       type: object
       properties:
+        source_url:
+          type: string
+          format: uri
         type:
           type: string
           enum: [manga, manhwa, comic, novel, anime, unknown]
