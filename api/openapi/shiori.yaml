@@ -67,6 +67,72 @@ paths:
               schema:
                 $ref: '#/components/schemas/CapabilitiesResponse'
 
+  /api/v1/media:
+    get:
+      summary: List library media
+      operationId: listMedia
+      tags:
+        - Library
+      responses:
+        '200':
+          description: A list of media items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Media'
+    post:
+      summary: Add a new media to the library
+      operationId: createMedia
+      tags:
+        - Library
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MediaCreateRequest'
+      responses:
+        '201':
+          description: Media created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Media'
+        '400':
+          description: Invalid request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /api/v1/media/{mediaId}:
+    get:
+      summary: Get media by ID
+      operationId: getMedia
+      tags:
+        - Library
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The media item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Media'
+        '404':
+          description: Media not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
 components:
   schemas:
     Problem:
@@ -115,3 +181,89 @@ components:
       required:
         - profile
         - capabilities
+
+    Media:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [manga, manhwa, comic, novel, anime, unknown]
+        title:
+          type: string
+        alternative_titles:
+          type: array
+          items:
+            type: string
+        description:
+          type: string
+        cover_url:
+          type: string
+        authors:
+          type: array
+          items:
+            type: string
+        artists:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [ongoing, completed, hiatus, cancelled, unknown]
+        genres:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - type
+        - title
+        - alternative_titles
+        - authors
+        - artists
+        - status
+        - genres
+        - created_at
+        - updated_at
+
+    MediaCreateRequest:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [manga, manhwa, comic, novel, anime, unknown]
+        title:
+          type: string
+        alternative_titles:
+          type: array
+          items:
+            type: string
+        description:
+          type: string
+        cover_url:
+          type: string
+        authors:
+          type: array
+          items:
+            type: string
+        artists:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [ongoing, completed, hiatus, cancelled, unknown]
+        genres:
+          type: array
+          items:
+            type: string
+      required:
+        - type
+        - title
