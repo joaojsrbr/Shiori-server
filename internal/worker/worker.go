@@ -85,6 +85,12 @@ func (p *Pool) workerLoop(ctx context.Context, workerID int) {
 					}
 					continue
 				}
+
+				// Avoid logging scary errors if we are shutting down
+				if ctx.Err() != nil {
+					return
+				}
+
 				// Other errors (e.g. DB connection) might require logging and backing off
 				p.logger.Error("failed to dequeue job", "error", err, "worker_id", workerID)
 				select {

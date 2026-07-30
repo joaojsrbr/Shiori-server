@@ -52,12 +52,19 @@ if (!(Test-Path "dist")) {
     New-Item -ItemType Directory -Path "dist" | Out-Null
 }
 
-Write-Host "Building shiori-server.exe..." -ForegroundColor Cyan
+Write-Host "Building shiori-server-debug.exe..." -ForegroundColor Cyan
 
 $env:CGO_ENABLED = "0"
 $env:GOOS = "windows"
 $env:GOARCH = "amd64"
 
-go build -trimpath -buildvcs=false -ldflags="$LdFlags" -o dist\shiori-server.exe .\cmd\api
+# Debug build (no optimization flags, keep terminal)
+go build -trimpath -buildvcs=false -ldflags="$LdFlags" -o dist\shiori-server-debug.exe .\cmd\api
 
-Write-Host "Build finished successfully: dist\shiori-server.exe" -ForegroundColor Green
+Write-Host "Building shiori-server-release.exe..." -ForegroundColor Cyan
+
+# Release build (strips debug symbols for smaller size, keeps terminal)
+$LdFlagsRelease = "$LdFlags -s -w"
+go build -trimpath -buildvcs=false -ldflags="$LdFlagsRelease" -o dist\shiori-server-release.exe .\cmd\api
+
+Write-Host "Build finished successfully: dist\shiori-server-debug.exe and dist\shiori-server-release.exe" -ForegroundColor Green

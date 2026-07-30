@@ -46,6 +46,11 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 1 {
+		// Default arguments if run directly without CLI flags
+		os.Args = append(os.Args, "serve", "--profile", "portable", "--data-dir", "./data", "--port", "8080", "--log-level", "debug")
+	}
+
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: shiori-server <command> [flags]")
 		fmt.Fprintln(os.Stderr, "commands: serve, version")
@@ -228,7 +233,11 @@ func runServe(args []string) error {
 	defer stop()
 
 	// Start worker pool in background
-	go workerPool.Start(ctx)
+	workerDone := make(chan struct{})
+	go func() {
+		workerPool.Start(ctx)
+		close(workerDone)
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -248,6 +257,9 @@ func runServe(args []string) error {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown error: %w", err)
 	}
+
+	// Wait for background workers to finish their current jobs before closing connections (like DB)
+	<-workerDone
 
 	logger.Info("server stopped gracefully")
 	return nil
