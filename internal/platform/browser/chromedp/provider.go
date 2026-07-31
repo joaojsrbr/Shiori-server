@@ -100,8 +100,13 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 	}
 	defer cancelTimeout()
 
+	targetURL := req.URL
+	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+		targetURL = "https://" + targetURL
+	}
+
 	actions := []chromedp.Action{
-		chromedp.Navigate(req.URL),
+		chromedp.Navigate(targetURL),
 		chromedp.WaitReady("body", chromedp.ByQuery),
 	}
 	if req.WaitFor != "" {

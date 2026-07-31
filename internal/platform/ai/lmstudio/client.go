@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -66,7 +67,15 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 // LoadModel instructs LM Studio to load a model into memory.
 // It tries to POST to /v1/models with the model name, which is supported by some LM Studio builds.
 func (c *Client) LoadModel(ctx context.Context, modelName string) error {
-	payload := map[string]string{"model": modelName}
+	payload := map[string]any{
+		"model":          modelName,
+		"context_length": 25000,
+		"n_ctx":          25000,
+		"config": map[string]any{
+			"context_length": 25000,
+			"n_ctx":          25000,
+		},
+	}
 	body, _ := json.Marshal(payload)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/models", bytes.NewReader(body))
@@ -135,7 +144,8 @@ func (c *Client) Infer(ctx context.Context, req InferRequest) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected status inferring: %s", resp.Status)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("unexpected status inferring: %s, body: %s", resp.Status, string(bodyBytes))
 	}
 
 	var payload InferResponse

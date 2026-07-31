@@ -21,8 +21,8 @@ type ExtractPayload struct {
 	Target extraction.TargetType `json:"target"`
 }
 
-// scriptStyleRegex matches <script> and <style> tags to clean HTML.
-var scriptStyleRegex = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>`)
+// scriptStyleRegex matches tags that contain no useful text for extraction (scripts, styles, svgs, etc) and HTML comments.
+var scriptStyleRegex = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>|<noscript[^>]*>.*?</noscript>|<svg[^>]*>.*?</svg>|<!--.*?-->`)
 
 // sanitizeHTML performs a lightweight cleanup to save LLM tokens.
 func sanitizeHTML(html string) string {
