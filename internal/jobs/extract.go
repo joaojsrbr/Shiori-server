@@ -182,7 +182,7 @@ func NewExtractHandler(
 
 			sendEvent("challenge", map[string]string{
 				"message":  "The page requires human interaction (captcha/cloudflare).",
-				"instance": fmt.Sprintf("http://localhost:8080/api/v1/challenges/%s", token),
+				"instance": fmt.Sprintf("http://localhost:9180/api/v1/challenges/%s", token),
 			})
 
 			// We block the worker here.

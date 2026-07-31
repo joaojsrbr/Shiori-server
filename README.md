@@ -51,4 +51,4 @@ O backend segue um modelo de API HTTP + Background Workers para tarefas longas.
    go run ./cmd/api
    ```
 
-A API subirá em `http://localhost:8080`.
+A API subirá em `http://localhost:9180`.

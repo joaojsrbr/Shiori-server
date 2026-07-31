@@ -95,7 +95,7 @@ func Defaults() Config {
 			Host:            "127.0.0.1",
 			Port:            9180,
 			ReadTimeout:     30 * time.Second,
-			WriteTimeout:    60 * time.Second,
+			WriteTimeout:    30 * time.Minute, // Allow long SSE and AI inference
 			IdleTimeout:     120 * time.Second,
 			ShutdownTimeout: 15 * time.Second,
 		},
