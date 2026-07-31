@@ -85,7 +85,7 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 			},
 		},
 		Temperature: 0.0,
-		MaxTokens:   4000,
+		MaxTokens:   25000,
 	}
 
 	content, err := p.client.Infer(ctx, inferReq)

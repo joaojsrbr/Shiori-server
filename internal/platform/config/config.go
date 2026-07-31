@@ -99,7 +99,7 @@ func Defaults() Config {
 		},
 		Log: LogConfig{
 			Level:  "info",
-			Format: "json",
+			Format: "pretty",
 		},
 		Postgres: PostgresConfig{
 			URL: "postgres://shiori:shiori@localhost:5432/shiori?sslmode=disable",
@@ -268,9 +268,8 @@ func (c Config) Validate() error {
 		errs = append(errs, fmt.Errorf("invalid log level %q: must be debug, info, warn, or error", c.Log.Level))
 	}
 
-	validFormats := map[string]bool{"json": true, "text": true}
-	if !validFormats[c.Log.Format] {
-		errs = append(errs, fmt.Errorf("invalid log format %q: must be json or text", c.Log.Format))
+	if c.Log.Format != "json" && c.Log.Format != "text" && c.Log.Format != "pretty" {
+		errs = append(errs, fmt.Errorf("invalid log format %q: must be json, text, or pretty", c.Log.Format))
 	}
 
 	return errors.Join(errs...)

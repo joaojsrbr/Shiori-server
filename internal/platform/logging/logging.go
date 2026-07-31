@@ -8,13 +8,16 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
+
+	"github.com/lmittmann/tint"
 )
 
 // Setup creates and sets the default slog logger based on the given level and
 // format. It writes to the provided writer (typically os.Stderr).
 //
 // Supported levels: debug, info, warn, error.
-// Supported formats: json, text.
+// Supported formats: json, text, pretty.
 func Setup(w io.Writer, level, format string) *slog.Logger {
 	lvl := parseLevel(level)
 
@@ -27,6 +30,12 @@ func Setup(w io.Writer, level, format string) *slog.Logger {
 	switch strings.ToLower(format) {
 	case "text":
 		handler = slog.NewTextHandler(w, opts)
+	case "pretty":
+		handler = tint.NewHandler(w, &tint.Options{
+			Level:      lvl,
+			TimeFormat: time.TimeOnly,
+			AddSource:  opts.AddSource,
+		})
 	default:
 		handler = slog.NewJSONHandler(w, opts)
 	}
