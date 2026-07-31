@@ -43,7 +43,7 @@ func TestProvider_Extract_Success(t *testing.T) {
 	}
 
 	tmplPath := createTestTemplates(t)
-	provider, err := nuextract.New(mockClient, "nuextract-tiny", tmplPath)
+	provider, err := nuextract.New(mockClient, "nuextract-tiny", tmplPath, 0)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -93,7 +93,7 @@ func TestProvider_Extract_ClientError(t *testing.T) {
 	}
 
 	tmplPath := createTestTemplates(t)
-	provider, _ := nuextract.New(mockClient, "nuextract-tiny", tmplPath)
+	provider, _ := nuextract.New(mockClient, "nuextract-tiny", tmplPath, 0)
 
 	_, err := provider.Extract(context.Background(), extraction.Request{Target: extraction.TargetManga})
 	if err == nil {
@@ -111,7 +111,7 @@ func TestProvider_Extract_InvalidJSON(t *testing.T) {
 	}
 
 	tmplPath := createTestTemplates(t)
-	provider, _ := nuextract.New(mockClient, "nuextract-tiny", tmplPath)
+	provider, _ := nuextract.New(mockClient, "nuextract-tiny", tmplPath, 0)
 
 	_, err := provider.Extract(context.Background(), extraction.Request{Target: extraction.TargetManga})
 	if err == nil {

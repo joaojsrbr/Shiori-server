@@ -92,7 +92,7 @@ func (h *Handler) LoadModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.client.LoadModel(r.Context(), modelName)
+	err := h.client.LoadModel(r.Context(), modelName, h.cfg.MaxContextLength)
 	if err != nil {
 		httpserver.RespondError(w, httpserver.Problem{
 			Status: http.StatusBadGateway,

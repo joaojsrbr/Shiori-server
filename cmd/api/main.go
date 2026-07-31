@@ -224,7 +224,7 @@ func runServe(args []string) error {
 	// Only registered when log level is "debug".
 	if cfg.Log.Level == "debug" && browserProvider != nil {
 		lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
-		debugExtProvider, err := nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath)
+		debugExtProvider, err := nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath, cfg.AI.MaxContentBytes)
 		if err != nil {
 			logger.Error("failed to init debug ai provider", "err", err)
 		} else {
@@ -246,7 +246,7 @@ func runServe(args []string) error {
 	var extProvider extraction.Provider
 	if cfg.AI.LMStudioBaseURL != "" {
 		lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
-		extProvider, err = nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath)
+		extProvider, err = nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath, cfg.AI.MaxContentBytes)
 		if err != nil {
 			logger.Error("failed to init ai provider", "err", err)
 			extProvider = nil
