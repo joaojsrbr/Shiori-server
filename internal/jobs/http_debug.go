@@ -110,6 +110,8 @@ func HandleDebugExtract(
 		var finalResultJSON map[string]interface{}
 		currentURL := payload.URL
 		pageCount := 1
+		visitedURLs := make(map[string]bool)
+		visitedURLs[currentURL] = true
 		var lastRes *extraction.Result
 		var loopErr error
 
@@ -136,13 +138,30 @@ func HandleDebugExtract(
 			}
 
 			if snap.UserAction {
-				b.CloseSession(context.Background(), navRes.SessionID)
-				token := cm.Create(navRes.SessionID) // This is technically invalid since session is closed, but debug handler is sync and won't wait.
+				token := cm.Create(navRes.SessionID)
 				sendEvent("challenge", map[string]string{
-					"message":  "The page requires human interaction (captcha/cloudflare). Debug endpoint cannot wait.",
+					"message":  "The page requires human interaction (captcha/cloudflare).",
 					"instance": fmt.Sprintf("http://localhost:9180/api/v1/challenges/%s", token),
 				})
-				return
+
+				if err := cm.Wait(ctx, token); err != nil {
+					b.CloseSession(context.Background(), navRes.SessionID)
+					sendError("Challenge Failed", "Challenge resolution failed or timed out: "+err.Error())
+					return
+				}
+
+				sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot after challenge..."})
+				snap, err = b.Snapshot(ctx, navRes.SessionID)
+				if err != nil {
+					b.CloseSession(context.Background(), navRes.SessionID)
+					sendError("Browser Error", "Failed to get snapshot after challenge: "+err.Error())
+					return
+				}
+				if snap.UserAction {
+					b.CloseSession(context.Background(), navRes.SessionID)
+					sendError("Challenge Failed", "User action still required after resolution")
+					return
+				}
 			}
 
 			b.CloseSession(context.Background(), navRes.SessionID)
@@ -202,8 +221,40 @@ func HandleDebugExtract(
 				}
 			}
 
+			if visitedURLs[nextURL] {
+				break
+			}
+			visitedURLs[nextURL] = true
+
 			currentURL = nextURL
 			pageCount++
+		}
+		// Deduplicate arrays in finalResultJSON
+		for k, v := range finalResultJSON {
+			if list, ok := v.([]interface{}); ok {
+				var deduped []interface{}
+				seen := make(map[string]bool)
+				for _, item := range list {
+					key := ""
+					if m, isMap := item.(map[string]interface{}); isMap {
+						if u, hasURL := m["url"].(string); hasURL && u != "" {
+							key = u
+						} else {
+							b, _ := json.Marshal(item)
+							key = string(b)
+						}
+					} else {
+						b, _ := json.Marshal(item)
+						key = string(b)
+					}
+
+					if !seen[key] {
+						seen[key] = true
+						deduped = append(deduped, item)
+					}
+				}
+				finalResultJSON[k] = deduped
+			}
 		}
 
 		finalBytes, _ := json.MarshalIndent(finalResultJSON, "", "  ")

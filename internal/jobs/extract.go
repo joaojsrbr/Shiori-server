@@ -163,6 +163,8 @@ func NewExtractHandler(
 		var finalResultJSON map[string]interface{}
 		currentURL := payload.URL
 		pageCount := 1
+		visitedURLs := make(map[string]bool)
+		visitedURLs[currentURL] = true
 		var lastRes *extraction.Result
 		var loopErr error
 
@@ -278,8 +280,41 @@ func NewExtractHandler(
 				}
 			}
 
+			if visitedURLs[nextURL] {
+				break
+			}
+			visitedURLs[nextURL] = true
+
 			currentURL = nextURL
 			pageCount++
+		}
+
+		// Deduplicate arrays in finalResultJSON
+		for k, v := range finalResultJSON {
+			if list, ok := v.([]interface{}); ok {
+				var deduped []interface{}
+				seen := make(map[string]bool)
+				for _, item := range list {
+					key := ""
+					if m, isMap := item.(map[string]interface{}); isMap {
+						if u, hasURL := m["url"].(string); hasURL && u != "" {
+							key = u
+						} else {
+							b, _ := json.Marshal(item)
+							key = string(b)
+						}
+					} else {
+						b, _ := json.Marshal(item)
+						key = string(b)
+					}
+
+					if !seen[key] {
+						seen[key] = true
+						deduped = append(deduped, item)
+					}
+				}
+				finalResultJSON[k] = deduped
+			}
 		}
 
 		finalBytes, _ := json.MarshalIndent(finalResultJSON, "", "  ")
