@@ -68,17 +68,14 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 // It tries to POST to /v1/models with the model name, which is supported by some LM Studio builds.
 func (c *Client) LoadModel(ctx context.Context, modelName string) error {
 	payload := map[string]any{
-		"model":          modelName,
-		"context_length": 25000,
-		"n_ctx":          25000,
-		"config": map[string]any{
-			"context_length": 25000,
-			"n_ctx":          25000,
-		},
+		"model":            modelName,
+		"context_length":   25000,
+		"flash_attention":  true,
+		"echo_load_config": true,
 	}
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/models", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/models/load", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}

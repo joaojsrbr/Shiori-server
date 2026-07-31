@@ -44,7 +44,7 @@ func TestClient_ListModels(t *testing.T) {
 
 func TestClient_LoadModel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" || r.Method != http.MethodPost {
+		if r.URL.Path != "/api/v1/models/load" || r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
