@@ -103,7 +103,9 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 			},
 		},
 		Temperature: 0.0,
-		MaxTokens:   25000,
+		// Keep MaxTokens moderate: enough for the schema output but won't exhaust
+		// the context budget left after the (potentially large) input prompt.
+		MaxTokens: 4096,
 	}
 
 	inferOutput, err := p.client.Infer(ctx, inferReq)
@@ -111,26 +113,100 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 		return nil, fmt.Errorf("%w: %v", extraction.ErrModelUnavailable, err)
 	}
 
-	// Try to find raw JSON brackets since the LLM might add conversational padding
+	// Try to find raw JSON object in the output.
+	// LLMs may add conversational padding or markdown fences around the JSON.
 	start := strings.Index(inferOutput, "{")
-	end := strings.LastIndex(inferOutput, "}")
-
-	if start == -1 || end == -1 || start > end {
-		return nil, fmt.Errorf("%w: failed to parse JSON brackets from output", extraction.ErrExtractionFailed)
+	if start == -1 {
+		return nil, fmt.Errorf("%w: no JSON object found in output", extraction.ErrExtractionFailed)
 	}
 
-	jsonString := inferOutput[start : end+1]
+	rawCandidate := inferOutput[start:]
 
-	// Basic validation just to ensure it parses as JSON
+	// If the JSON is truncated (model ran out of tokens), attempt to repair it
+	// by balancing unclosed braces/brackets before validating.
+	jsonString, repaired := repairJSON(rawCandidate)
+
 	var dummy interface{}
 	if err := json.Unmarshal([]byte(jsonString), &dummy); err != nil {
 		return nil, fmt.Errorf("%w: output is not valid json: %v", extraction.ErrExtractionFailed, err)
 	}
 
+	var warnings []string
+	if repaired {
+		warnings = append(warnings, "LLM output was truncated; JSON was auto-repaired and may be incomplete")
+	}
+
 	return &extraction.Result{
 		RawJSON:    json.RawMessage(jsonString),
-		Confidence: 0.85, // NuExtract is quite reliable for structured schemas, but heuristic validation later confirms it
+		Confidence: 0.85,
 		Method:     p.modelName,
-		Warnings:   nil,
+		Warnings:   warnings,
 	}, nil
+}
+
+// repairJSON attempts to close any unclosed JSON braces/brackets in a
+// potentially truncated LLM output. Returns the (possibly repaired) string
+// and a boolean indicating whether any repair was applied.
+func repairJSON(s string) (string, bool) {
+	// First try the string as-is (find last closing brace)
+	end := strings.LastIndex(s, "}")
+	if end != -1 {
+		candidate := s[:end+1]
+		var dummy interface{}
+		if json.Unmarshal([]byte(candidate), &dummy) == nil {
+			return candidate, false // already valid
+		}
+	}
+
+	// Output is truncated. Walk the string tracking open structures,
+	// then append the necessary closing characters.
+	var stack []byte
+	inString := false
+	escaped := false
+
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch ch {
+		case '{':
+			stack = append(stack, '}')
+		case '[':
+			stack = append(stack, ']')
+		case '}', ']':
+			if len(stack) > 0 && stack[len(stack)-1] == ch {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+
+	if len(stack) == 0 {
+		// Nothing to close; the JSON is just malformed in an unrecoverable way
+		return s, false
+	}
+
+	// Close unclosed string if we're still inside one
+	repaired := s
+	if inString {
+		repaired += "\""
+	}
+	// Close structures in reverse order
+	for i := len(stack) - 1; i >= 0; i-- {
+		repaired += string(stack[i])
+	}
+
+	return repaired, true
 }
