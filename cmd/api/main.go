@@ -200,6 +200,10 @@ func runServe(args []string) error {
 	srv := httpserver.New(cfg.Server.Addr(), logger)
 	srv.SetTimeouts(cfg.Server.ReadTimeout, cfg.Server.WriteTimeout, cfg.Server.IdleTimeout)
 
+	// Register Challenge Manager
+	challengeManager := browser.NewChallengeManager()
+	challengeHandler := jobs.NewChallengeHandler(browserProvider, challengeManager)
+
 	// Register API routes
 	libHandler := library.NewHandler(mediaRepo)
 	aiHandler := ai.NewHandler(cfg.AI)
@@ -212,9 +216,8 @@ func runServe(args []string) error {
 		libHandler.RegisterRoutes(r)
 		aiHandler.RegisterRoutes(r)
 		jobsHandler.RegisterRoutes(r)
+		challengeHandler.RegisterRoutes(r)
 	})
-
-	challengeManager := browser.NewChallengeManager()
 
 	// Debug-only endpoints: run extraction synchronously and return AI output.
 	// Only registered when log level is "debug".
@@ -234,15 +237,9 @@ func runServe(args []string) error {
 	// 6. Background Worker Pool
 	workerPool := worker.New(queueProvider, logger, 3) // Concurrency 3
 
-	// Setup Extraction Provider & Challenge Manager
+	// Setup Extraction Provider
 	lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
 	extProvider := nuextract.New(lmClient, cfg.AI.ModelDefault)
-
-	// Register Challenge Routes
-	challengeHandler := jobs.NewChallengeHandler(browserProvider, challengeManager)
-	srv.Router().Route("/api/v1", func(r chi.Router) {
-		challengeHandler.RegisterRoutes(r)
-	})
 
 	extractHandler := jobs.NewExtractHandler(browserProvider, extProvider, mediaRepo, challengeManager)
 	workerPool.Register("extract_media", extractHandler)
