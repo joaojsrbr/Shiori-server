@@ -33,6 +33,8 @@ func sanitizeHTML(htmlStr string) string {
 		"script": true, "style": true, "noscript": true, "svg": true, "path": true,
 		"iframe": true, "nav": true, "footer": true, "header": true,
 		"link": true, "meta": true, "button": true,
+		"form": true, "input": true, "select": true, "option": true, "textarea": true,
+		"dialog": true, "canvas": true, "map": true, "area": true,
 	}
 
 	var fNode func(*html.Node)
