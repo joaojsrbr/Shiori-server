@@ -21,8 +21,8 @@ type ExtractPayload struct {
 	Target extraction.TargetType `json:"target"`
 }
 
-// scriptStyleRegex matches <script> and <style> tags to clean HTML.
-var scriptStyleRegex = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>`)
+// scriptStyleRegex matches tags that contain no useful text for extraction (scripts, styles, svgs, etc) and HTML comments.
+var scriptStyleRegex = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>|<noscript[^>]*>.*?</noscript>|<svg[^>]*>.*?</svg>|<!--.*?-->`)
 
 // sanitizeHTML performs a lightweight cleanup to save LLM tokens.
 func sanitizeHTML(html string) string {
@@ -37,6 +37,7 @@ func NewExtractHandler(
 	b browser.Provider,
 	ext extraction.Provider,
 	repo library.MediaRepository,
+	cm *browser.ChallengeManager,
 ) worker.Handler {
 	return func(ctx context.Context, job *queue.Job) error {
 		// 1. Decode Payload
@@ -67,7 +68,24 @@ func NewExtractHandler(
 		}
 
 		if snap.UserAction {
-			return fmt.Errorf("user action required (captcha/cloudflare)")
+			token := cm.Create(navRes.SessionID)
+			slog.Info("user action required, waiting for challenge resolution", "token", token, "url", fmt.Sprintf("/api/v1/challenges/%s", token))
+
+			// We block the worker here. In a real system we would update the job status in the DB
+			// to "requires_user_action" and include the URL, but our queue/job interface doesn't
+			// support runtime status updates yet.
+			if err := cm.Wait(ctx, token); err != nil {
+				return fmt.Errorf("challenge failed or timed out: %w", err)
+			}
+
+			// Take snapshot again after challenge is solved
+			snap, err = b.Snapshot(ctx, navRes.SessionID)
+			if err != nil {
+				return fmt.Errorf("browser failed to get snapshot after challenge: %w", err)
+			}
+			if snap.UserAction {
+				return fmt.Errorf("user action still required after challenge resolution")
+			}
 		}
 
 		// 3. Sanitize HTML

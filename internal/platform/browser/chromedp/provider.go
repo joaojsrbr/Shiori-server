@@ -2,6 +2,7 @@ package chromedp
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/google/uuid"
 	"github.com/joaojsr/shiori-server/internal/platform/browser"
@@ -100,8 +103,13 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 	}
 	defer cancelTimeout()
 
+	targetURL := req.URL
+	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+		targetURL = "https://" + targetURL
+	}
+
 	actions := []chromedp.Action{
-		chromedp.Navigate(req.URL),
+		chromedp.Navigate(targetURL),
 		chromedp.WaitReady("body", chromedp.ByQuery),
 	}
 	if req.WaitFor != "" {
@@ -290,4 +298,72 @@ func (p *Provider) CloseSession(ctx context.Context, sessionID string) error {
 		return fmt.Errorf("chromedp: remove profile directory: %w", err)
 	}
 	return nil
+}
+
+func (p *Provider) Screencast(ctx context.Context, sessionID string, frames chan<- []byte, in <-chan browser.InputEvent) error {
+	p.mu.Lock()
+	activeSession, exists := p.sessions[sessionID]
+	p.mu.Unlock()
+
+	if !exists {
+		return errors.New("chromedp: session not found")
+	}
+
+	// Wait for context cancellation or session end
+	defer func() {
+		// Stop screencast if we are leaving
+		_ = chromedp.Run(activeSession.ctx, page.StopScreencast())
+	}()
+
+	// Register event listener for screencast frames
+	chromedp.ListenTarget(activeSession.ctx, func(ev interface{}) {
+		if ev, ok := ev.(*page.EventScreencastFrame); ok {
+			// Acknowledge frame to receive the next one
+			go func() {
+				_ = chromedp.Run(activeSession.ctx, page.ScreencastFrameAck(ev.SessionID))
+			}()
+
+			// Decode base64 frame
+			data, err := base64.StdEncoding.DecodeString(ev.Data)
+			if err == nil {
+				select {
+				case <-ctx.Done():
+				case frames <- data:
+				}
+			}
+		}
+	})
+
+	// Start screencast
+	err := chromedp.Run(activeSession.ctx,
+		page.StartScreencast().WithFormat(page.ScreencastFormatJpeg).WithQuality(80).WithEveryNthFrame(1),
+	)
+	if err != nil {
+		return fmt.Errorf("chromedp: start screencast failed: %w", err)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-activeSession.ctx.Done():
+			return activeSession.ctx.Err()
+		case ev, ok := <-in:
+			if !ok {
+				return nil
+			}
+			var act chromedp.Action
+			switch ev.Type {
+			case "mouseMoved":
+				act = input.DispatchMouseEvent(input.MouseMoved, float64(ev.X), float64(ev.Y))
+			case "mousePressed":
+				act = input.DispatchMouseEvent(input.MousePressed, float64(ev.X), float64(ev.Y)).WithButton(input.MouseButton(ev.Button)).WithClickCount(1)
+			case "mouseReleased":
+				act = input.DispatchMouseEvent(input.MouseReleased, float64(ev.X), float64(ev.Y)).WithButton(input.MouseButton(ev.Button)).WithClickCount(1)
+			}
+			if act != nil {
+				_ = chromedp.Run(activeSession.ctx, act)
+			}
+		}
+	}
 }
