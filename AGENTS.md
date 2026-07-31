@@ -31,49 +31,25 @@ origem não possa ser determinada.
 
 ## Workflow Git obrigatório
 
-Toda implementação forma uma árvore de branches: **blocos** pequenos são
-mesclados na branch da **feature**, e a feature — só depois de completa e
-validada — é mesclada em `main`. Cada branch de bloco existe apenas até ser
-mesclada; ela é excluída logo em seguida.
+O fluxo de trabalho Git oficial do projeto (válido para front e back) é:
 
-### Preparação
+1. A partir da branch `main`, **criar uma branch com o nome da feature** (ex: `feature/sua-tarefa`).
+2. A partir **dessa branch nome (feature)**, você deve **criar as branches menores (os blocos)** para cada parte da tarefa.
+3. No final de cada bloco concluído, você **mergeia a branch do bloco de volta na branch da feature** e exclui a branch do bloco.
+4. Depois de finalizar e testar todos os blocos, no final da tarefa, você **mergeia a branch da feature na `main`**, excluindo a branch da feature, óbvio.
+
+### 1. Criar a branch nome (feature) a partir da main
 
 ```powershell
-git status --short
 git switch main
 git switch -c feature/<slug-curto>
 ```
 
-Tipos permitidos:
+Se `main` estiver suja com trabalho não relacionado, preserve-o e não prossiga como se fosse seu. Nunca use `reset --hard`.
 
-```text
-feature/<slug>
-fix/<slug>
-refactor/<slug>
-test/<slug>
-docs/<slug>
-chore/<slug>
-```
+### 2. Criar e trabalhar nas branches (blocos)
 
-`git checkout -b <branch>` pode ser usado como alternativa.
-
-Se `main` estiver suja com trabalho não relacionado, preserve-o e não prossiga
-como se fosse seu. Nunca use `reset --hard`, `checkout -- .` ou clean
-destrutivo.
-
-### Divisão em blocos
-
-Antes de codificar, quebre a implementação em blocos pequenos e coerentes
-(ex.: "estrutura base do adapter", "integração com a fila", "testes de
-contrato"). Cada bloco vira uma sub-branch da feature, nomeada:
-
-```text
-feature/<slug-curto>/bloco-<n>-<slug-do-bloco>
-```
-
-(o mesmo padrão se aplica a fix/, refactor/, test/, docs/, chore/).
-
-Para cada bloco:
+A partir da sua branch `feature/<slug-curto>`, crie a branch do bloco:
 
 ```powershell
 git switch feature/<slug-curto>
@@ -81,12 +57,10 @@ git switch -c feature/<slug-curto>/bloco-<n>-<slug-do-bloco>
 ```
 
 - Implemente somente o escopo do bloco.
-- Faça commits pequenos com Conventional Commits, referenciando o bloco
-  quando útil: `feat(extraction): add LM Studio adapter base (bloco 1/3)`.
-- Revise `git status`, `git diff` e `git diff --cached`.
-- Atualize OpenAPI antes do código quando o contrato mudar.
-- Atualize `docs/megabrain/` conforme o bloco avança.
+- Faça commits pequenos com Conventional Commits.
 - Não versione `dist/`, SQLite, storage, logs, `.env` ou credenciais.
+
+### 3. Fazer o merge do bloco na branch nome (feature)
 
 Ao concluir o bloco, valide e mescle de volta na branch da feature:
 
@@ -99,14 +73,11 @@ git merge --no-ff feature/<slug-curto>/bloco-<n>-<slug-do-bloco>
 git branch -d feature/<slug-curto>/bloco-<n>-<slug-do-bloco>
 ```
 
-Repita para cada bloco seguinte, sempre criando a sub-branch a partir da
-branch da feature já atualizada. O resultado é uma árvore local: blocos →
-feature → main. Branches de bloco não são publicadas — push, pull request e
-alterações no GitHub exigem pedido explícito, como no restante do workflow.
+Repita o passo 2 e 3 para os próximos blocos. As branches de bloco são excluídas assim que mescladas.
 
-### Validação da feature completa
+### 4. No final, mergear na main e excluir a branch
 
-Com todos os blocos mesclados na branch da feature:
+Com todos os blocos mesclados na branch da feature, valide tudo:
 
 ```powershell
 gofmt -w .
@@ -116,11 +87,7 @@ git diff --check
 git status --short
 ```
 
-Execute também smoke tests do `.exe`, Docker ou worker quando afetados.
-
-### Conclusão
-
-Com verificações aprovadas:
+Com verificações aprovadas, faça o merge final na `main` e exclua a branch nome:
 
 ```powershell
 git switch main
@@ -130,12 +97,8 @@ go test ./...
 git branch -d feature/<slug-curto>
 ```
 
-Use merge normal com `--no-ff` em cada nível da árvore (bloco → feature,
-feature → main). Não faça squash, rebase de commits publicados, force push ou
-merge remoto automaticamente.
-
-Se houver mudanças pareadas no frontend, registre branch/contrato no Handoff;
-cada repositório recebe seu próprio commit e merge.
+Use merge normal com `--no-ff` em cada nível (bloco → feature, feature → main).
+Se houver mudanças pareadas no frontend, lembre-se que cada repositório tem seu próprio merge.
 
 ## Critério de conclusão
 
