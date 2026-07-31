@@ -1,8 +1,11 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/joaojsr/shiori-server/internal/extraction"
 	"github.com/joaojsr/shiori-server/internal/library"
@@ -29,15 +32,15 @@ func HandleDebugExtract(
 	b browser.Provider,
 	ext extraction.Provider,
 	repo library.MediaRepository,
+	cm *browser.ChallengeManager,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// 1. Decode payload (same as the job endpoint)
 		var payload ExtractPayload
-		if err := httpserver.DecodeJSON(r, &payload); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			httpserver.RespondError(w, httpserver.Problem{
 				Status: http.StatusBadRequest,
-				Title:  "Invalid Request",
-				Detail: err.Error(),
+				Title:  "Invalid Payload",
+				Detail: "Failed to parse JSON body",
 			})
 			return
 		}
@@ -46,7 +49,7 @@ func HandleDebugExtract(
 			httpserver.RespondError(w, httpserver.Problem{
 				Status: http.StatusBadRequest,
 				Title:  "Invalid Request",
-				Detail: "url and target are required",
+				Detail: "URL and Target are required",
 			})
 			return
 		}
@@ -64,7 +67,15 @@ func HandleDebugExtract(
 			})
 			return
 		}
-		defer b.CloseSession(ctx, navRes.SessionID)
+
+		sessionClosed := false
+		closeSession := func() {
+			if !sessionClosed {
+				b.CloseSession(context.Background(), navRes.SessionID)
+				sessionClosed = true
+			}
+		}
+		defer closeSession()
 
 		snap, err := b.Snapshot(ctx, navRes.SessionID)
 		if err != nil {
@@ -77,10 +88,24 @@ func HandleDebugExtract(
 		}
 
 		if snap.UserAction {
+			token := cm.Create(navRes.SessionID)
+
+			// We take ownership of closing the session so it stays alive for the challenge
+			sessionClosed = true
+			go func() {
+				defer b.CloseSession(context.Background(), navRes.SessionID)
+
+				// Keep it alive until resolved or timed out (e.g. 5 minutes)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				_ = cm.Wait(ctx, token)
+			}()
+
 			httpserver.RespondError(w, httpserver.Problem{
-				Status: http.StatusConflict,
-				Title:  "User Action Required",
-				Detail: "The page requires human interaction (captcha/cloudflare).",
+				Status:   http.StatusConflict,
+				Title:    "User Action Required",
+				Detail:   "The page requires human interaction (captcha/cloudflare).",
+				Instance: fmt.Sprintf("http://localhost:8080/api/v1/challenges/%s", token),
 			})
 			return
 		}
