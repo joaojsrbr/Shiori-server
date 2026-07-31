@@ -47,8 +47,8 @@ func sanitizeHTML(htmlStr string) string {
 				} else {
 					var keep []html.Attribute
 					for _, a := range c.Attr {
-						// Only keep semantic attributes useful for extraction
-						if a.Key == "href" || a.Key == "src" || a.Key == "alt" || a.Key == "title" {
+						key := strings.ToLower(a.Key)
+						if key == "href" || key == "src" || key == "alt" || key == "title" || key == "id" || key == "class" || strings.HasPrefix(key, "data-") {
 							keep = append(keep, a)
 						}
 					}
