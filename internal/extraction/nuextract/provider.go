@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/joaojsr/shiori-server/internal/extraction"
@@ -26,6 +27,19 @@ type Provider struct {
 // New Creates a new NuExtract provider.
 func New(client AIClient, modelName string, templatePath string) (*Provider, error) {
 	data, err := os.ReadFile(templatePath)
+	if err != nil {
+		// Fallback: try relative to the executable path (useful when double-clicking .exe or running from bin/)
+		if exe, e := os.Executable(); e == nil {
+			exeDir := filepath.Dir(exe)
+			if fallbackData, e2 := os.ReadFile(filepath.Join(exeDir, templatePath)); e2 == nil {
+				data = fallbackData
+				err = nil
+			} else if fallbackData2, e3 := os.ReadFile(filepath.Join(exeDir, "..", templatePath)); e3 == nil {
+				data = fallbackData2
+				err = nil
+			}
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("reading templates file: %w", err)
 	}

@@ -128,8 +128,14 @@ func Defaults() Config {
 // It does not validate the configuration; call Validate() after Load().
 func Load(flags Flags) (Config, error) {
 	// Try loading .env file from the config directory.
-	// We ignore the error because the file is optional.
-	_ = godotenv.Load("config/.env")
+	envPath := "config/.env"
+	if err := godotenv.Load(envPath); err != nil {
+		if exe, e := os.Executable(); e == nil {
+			exeDir := filepath.Dir(exe)
+			_ = godotenv.Load(filepath.Join(exeDir, envPath))
+			_ = godotenv.Load(filepath.Join(exeDir, "..", envPath))
+		}
+	}
 
 	cfg := Defaults()
 
