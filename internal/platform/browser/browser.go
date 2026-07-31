@@ -42,4 +42,18 @@ type Provider interface {
 
 	// CloseSession closes a given session.
 	CloseSession(ctx context.Context, sessionID string) error
+
+	// Screencast starts a screencast stream for the session.
+	// Frames are sent to the frames channel as raw JPEG bytes.
+	// Input events are received from the input channel.
+	// This method blocks until the context is cancelled or the session closes.
+	Screencast(ctx context.Context, sessionID string, frames chan<- []byte, input <-chan InputEvent) error
+}
+
+// InputEvent represents a user interaction on the screencast canvas.
+type InputEvent struct {
+	Type   string // "mouseMoved", "mousePressed", "mouseReleased"
+	X      int
+	Y      int
+	Button string // "left", "right", "none"
 }
