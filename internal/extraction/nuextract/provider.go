@@ -19,13 +19,14 @@ type AIClient interface {
 
 // Provider implements the extraction.Provider using NuExtract through LM Studio.
 type Provider struct {
-	client    AIClient
-	modelName string
-	templates map[string]json.RawMessage
+	client          AIClient
+	modelName       string
+	templates       map[string]json.RawMessage
+	maxContentBytes int
 }
 
 // New Creates a new NuExtract provider.
-func New(client AIClient, modelName string, templatePath string) (*Provider, error) {
+func New(client AIClient, modelName string, templatePath string, maxContentBytes int) (*Provider, error) {
 	data, err := os.ReadFile(templatePath)
 	if err != nil {
 		// Fallback: try relative to the executable path (useful when double-clicking .exe or running from bin/)
@@ -50,9 +51,10 @@ func New(client AIClient, modelName string, templatePath string) (*Provider, err
 	}
 
 	return &Provider{
-		client:    client,
-		modelName: modelName,
-		templates: templates,
+		client:          client,
+		modelName:       modelName,
+		templates:       templates,
+		maxContentBytes: maxContentBytes,
 	}, nil
 }
 
@@ -72,9 +74,25 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 		return nil, fmt.Errorf("getting schema: %w", err)
 	}
 
+	// Truncate content to stay within the model's context window.
+	// UTF-8 safe: truncate on rune boundary.
+	content := req.Content
+	if p.maxContentBytes > 0 && len(content) > p.maxContentBytes {
+		// Walk runes until we exceed the limit
+		truncated := content[:p.maxContentBytes]
+		// Walk backward to find a valid UTF-8 boundary
+		for len(truncated) > 0 {
+			if truncated[len(truncated)-1]&0xC0 != 0x80 {
+				break
+			}
+			truncated = truncated[:len(truncated)-1]
+		}
+		content = truncated
+	}
+
 	// Format NuExtract prompt
-	// <|input|>\n{HTML}\n<|template|>\n{SCHEMA}
-	prompt := fmt.Sprintf("<|input|>\n%s\n<|template|>\n%s", req.Content, schema)
+	// <|input|>\n{CONTENT}\n<|template|>\n{SCHEMA}
+	prompt := fmt.Sprintf("<|input|>\n%s\n<|template|>\n%s", content, schema)
 
 	inferReq := lmstudio.InferRequest{
 		Model: p.modelName,
@@ -88,20 +106,20 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 		MaxTokens:   25000,
 	}
 
-	content, err := p.client.Infer(ctx, inferReq)
+	inferOutput, err := p.client.Infer(ctx, inferReq)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", extraction.ErrModelUnavailable, err)
 	}
 
 	// Try to find raw JSON brackets since the LLM might add conversational padding
-	start := strings.Index(content, "{")
-	end := strings.LastIndex(content, "}")
+	start := strings.Index(inferOutput, "{")
+	end := strings.LastIndex(inferOutput, "}")
 
 	if start == -1 || end == -1 || start > end {
 		return nil, fmt.Errorf("%w: failed to parse JSON brackets from output", extraction.ErrExtractionFailed)
 	}
 
-	jsonString := content[start : end+1]
+	jsonString := inferOutput[start : end+1]
 
 	// Basic validation just to ensure it parses as JSON
 	var dummy interface{}

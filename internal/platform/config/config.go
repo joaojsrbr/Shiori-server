@@ -40,12 +40,14 @@ type Config struct {
 }
 
 type AIConfig struct {
-	LMStudioBaseURL string
-	Token           string
-	ModelTiny       string
-	ModelDefault    string
-	ModelQuality    string
-	TemplatePath    string
+	LMStudioBaseURL  string
+	Token            string
+	ModelTiny        string
+	ModelDefault     string
+	ModelQuality     string
+	TemplatePath     string
+	MaxContextLength int // n_ctx when loading model (tokens)
+	MaxContentBytes  int // max bytes of distilled content sent to LLM
 }
 
 type PostgresConfig struct {
@@ -115,11 +117,13 @@ func Defaults() Config {
 			UseSSL:    false,
 		},
 		AI: AIConfig{
-			LMStudioBaseURL: "http://127.0.0.1:1234",
-			ModelTiny:       "nuextract-1.5-tiny",
-			ModelDefault:    "nuextract3@q4_k_m",
-			ModelQuality:    "nuextract3@q5_k_m",
-			TemplatePath:    "config/nuextract_templates.json",
+			LMStudioBaseURL:  "http://127.0.0.1:1234",
+			ModelTiny:        "nuextract-1.5-tiny",
+			ModelDefault:     "nuextract3@q4_k_m",
+			ModelQuality:     "nuextract3@q5_k_m",
+			TemplatePath:     "config/nuextract_templates.json",
+			MaxContextLength: 65536,
+			MaxContentBytes:  40000, // ~10k tokens, deixa margem para o template e resposta
 		},
 	}
 }

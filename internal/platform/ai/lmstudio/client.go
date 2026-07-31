@@ -66,10 +66,10 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 
 // LoadModel instructs LM Studio to load a model into memory.
 // It tries to POST to /v1/models with the model name, which is supported by some LM Studio builds.
-func (c *Client) LoadModel(ctx context.Context, modelName string) error {
+func (c *Client) LoadModel(ctx context.Context, modelName string, contextLength int) error {
 	payload := map[string]any{
 		"model":            modelName,
-		"context_length":   23000,
+		"context_length":   contextLength,
 		"flash_attention":  true,
 		"echo_load_config": true,
 	}

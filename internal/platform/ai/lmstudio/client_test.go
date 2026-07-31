@@ -54,7 +54,7 @@ func TestClient_LoadModel(t *testing.T) {
 	defer srv.Close()
 
 	client := lmstudio.NewClient(srv.URL, "")
-	err := client.LoadModel(context.Background(), "nuextract-1.5-tiny")
+	err := client.LoadModel(context.Background(), "nuextract-1.5-tiny", 8192)
 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
