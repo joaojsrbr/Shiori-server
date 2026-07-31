@@ -28,7 +28,7 @@ func TestFakeProvider_Extract(t *testing.T) {
 	provider.Errors[errorURL] = extraction.ErrModelUnavailable
 
 	t.Run("Returns configured response", func(t *testing.T) {
-		req := extraction.Request{URL: successURL, Target: extraction.TargetMedia}
+		req := extraction.Request{URL: successURL, Target: extraction.TargetManga}
 		res, err := provider.Extract(ctx, req)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
@@ -40,7 +40,7 @@ func TestFakeProvider_Extract(t *testing.T) {
 	})
 
 	t.Run("Returns configured error", func(t *testing.T) {
-		req := extraction.Request{URL: errorURL, Target: extraction.TargetMedia}
+		req := extraction.Request{URL: errorURL, Target: extraction.TargetManga}
 		res, err := provider.Extract(ctx, req)
 		if err != extraction.ErrModelUnavailable {
 			t.Fatalf("expected ErrModelUnavailable, got %v", err)
@@ -51,7 +51,7 @@ func TestFakeProvider_Extract(t *testing.T) {
 	})
 
 	t.Run("Returns default error for unknown URL without default result", func(t *testing.T) {
-		req := extraction.Request{URL: unknownURL, Target: extraction.TargetMedia}
+		req := extraction.Request{URL: unknownURL, Target: extraction.TargetManga}
 		_, err := provider.Extract(ctx, req)
 		if err != extraction.ErrExtractionFailed {
 			t.Fatalf("expected ErrExtractionFailed, got %v", err)
@@ -62,7 +62,7 @@ func TestFakeProvider_Extract(t *testing.T) {
 		defaultJSON := json.RawMessage(`{"title": "Default"}`)
 		provider.DefaultResult = &extraction.Result{RawJSON: defaultJSON}
 
-		req := extraction.Request{URL: unknownURL, Target: extraction.TargetMedia}
+		req := extraction.Request{URL: unknownURL, Target: extraction.TargetManga}
 		res, err := provider.Extract(ctx, req)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)

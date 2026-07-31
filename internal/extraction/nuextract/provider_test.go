@@ -3,6 +3,8 @@ package nuextract_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,16 +25,32 @@ func (m *MockAIClient) Infer(ctx context.Context, req lmstudio.InferRequest) (st
 	return m.Response, m.Err
 }
 
+func createTestTemplates(t *testing.T) string {
+	t.Helper()
+	content := `{
+		"manga": {"type": "manga"}
+	}`
+	tmp := filepath.Join(t.TempDir(), "templates.json")
+	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return tmp
+}
+
 func TestProvider_Extract_Success(t *testing.T) {
 	mockClient := &MockAIClient{
 		Response: "```json\n{\n  \"title\": \"One Piece\",\n  \"type\": \"manga\"\n}\n```",
 	}
 
-	provider := nuextract.New(mockClient, "nuextract-tiny")
+	tmplPath := createTestTemplates(t)
+	provider, err := nuextract.New(mockClient, "nuextract-tiny", tmplPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
 
 	req := extraction.Request{
 		Content: "<html>One Piece manga HTML here</html>",
-		Target:  extraction.TargetMedia,
+		Target:  extraction.TargetManga,
 	}
 
 	res, err := provider.Extract(context.Background(), req)
@@ -74,9 +92,10 @@ func TestProvider_Extract_ClientError(t *testing.T) {
 		Err: errors.New("timeout"),
 	}
 
-	provider := nuextract.New(mockClient, "nuextract-tiny")
+	tmplPath := createTestTemplates(t)
+	provider, _ := nuextract.New(mockClient, "nuextract-tiny", tmplPath)
 
-	_, err := provider.Extract(context.Background(), extraction.Request{Target: extraction.TargetMedia})
+	_, err := provider.Extract(context.Background(), extraction.Request{Target: extraction.TargetManga})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -91,9 +110,10 @@ func TestProvider_Extract_InvalidJSON(t *testing.T) {
 		Response: "I am an AI, I cannot help you with that.",
 	}
 
-	provider := nuextract.New(mockClient, "nuextract-tiny")
+	tmplPath := createTestTemplates(t)
+	provider, _ := nuextract.New(mockClient, "nuextract-tiny", tmplPath)
 
-	_, err := provider.Extract(context.Background(), extraction.Request{Target: extraction.TargetMedia})
+	_, err := provider.Extract(context.Background(), extraction.Request{Target: extraction.TargetManga})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

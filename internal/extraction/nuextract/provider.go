@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/joaojsr/shiori-server/internal/extraction"
@@ -19,50 +20,40 @@ type AIClient interface {
 type Provider struct {
 	client    AIClient
 	modelName string
+	templates map[string]json.RawMessage
 }
 
 // New Creates a new NuExtract provider.
-func New(client AIClient, modelName string) *Provider {
+func New(client AIClient, modelName string, templatePath string) (*Provider, error) {
+	data, err := os.ReadFile(templatePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading templates file: %w", err)
+	}
+
+	var templates map[string]json.RawMessage
+	if err := json.Unmarshal(data, &templates); err != nil {
+		return nil, fmt.Errorf("parsing templates JSON: %w", err)
+	}
+
 	return &Provider{
 		client:    client,
 		modelName: modelName,
-	}
+		templates: templates,
+	}, nil
 }
 
 // getTemplateForTarget returns the JSON template for NuExtract to fill.
-func getTemplateForTarget(target extraction.TargetType) (string, error) {
-	switch target {
-	case extraction.TargetMedia:
-		return `{
-			"type": "",
-			"title": "",
-			"alternative_titles": [],
-			"description": "",
-			"cover_url": "",
-			"authors": [],
-			"artists": [],
-			"status": "",
-			"genres": []
-		}`, nil
-	case extraction.TargetChapterList:
-		return `{
-			"chapters": [
-				{
-					"number": "",
-					"title": "",
-					"url": "",
-					"date": ""
-				}
-			]
-		}`, nil
-	default:
-		return "", fmt.Errorf("unknown target type: %s", target)
+func (p *Provider) getTemplateForTarget(target extraction.TargetType) (string, error) {
+	tmpl, ok := p.templates[string(target)]
+	if !ok {
+		return "", fmt.Errorf("unknown target type or missing template: %s", target)
 	}
+	return string(tmpl), nil
 }
 
 // Extract invokes NuExtract logic via inference.
 func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extraction.Result, error) {
-	schema, err := getTemplateForTarget(req.Target)
+	schema, err := p.getTemplateForTarget(req.Target)
 	if err != nil {
 		return nil, fmt.Errorf("getting schema: %w", err)
 	}

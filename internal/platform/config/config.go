@@ -45,6 +45,7 @@ type AIConfig struct {
 	ModelTiny       string
 	ModelDefault    string
 	ModelQuality    string
+	TemplatePath    string
 }
 
 type PostgresConfig struct {
@@ -118,6 +119,7 @@ func Defaults() Config {
 			ModelTiny:       "nuextract-1.5-tiny",
 			ModelDefault:    "nuextract3@q4_k_m",
 			ModelQuality:    "nuextract3@q5_k_m",
+			TemplatePath:    "config/nuextract_templates.json",
 		},
 	}
 }
@@ -125,9 +127,9 @@ func Defaults() Config {
 // Load reads configuration from environment variables and applies flags.
 // It does not validate the configuration; call Validate() after Load().
 func Load(flags Flags) (Config, error) {
-	// Try loading .env file from the current directory.
+	// Try loading .env file from the config directory.
 	// We ignore the error because the file is optional.
-	_ = godotenv.Load()
+	_ = godotenv.Load("config/.env")
 
 	cfg := Defaults()
 

@@ -21,6 +21,7 @@ import (
 	"github.com/joaojsr/shiori-server/api/openapi"
 	"github.com/joaojsr/shiori-server/internal/ai"
 	"github.com/joaojsr/shiori-server/internal/buildinfo"
+	"github.com/joaojsr/shiori-server/internal/extraction"
 	"github.com/joaojsr/shiori-server/internal/extraction/nuextract"
 	"github.com/joaojsr/shiori-server/internal/jobs"
 	"github.com/joaojsr/shiori-server/internal/library"
@@ -223,11 +224,15 @@ func runServe(args []string) error {
 	// Only registered when log level is "debug".
 	if cfg.Log.Level == "debug" && browserProvider != nil {
 		lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
-		debugExtProvider := nuextract.New(lmClient, cfg.AI.ModelDefault)
-		srv.Router().Route("/api/v1/debug", func(r chi.Router) {
-			r.Post("/extract", jobs.HandleDebugExtract(browserProvider, debugExtProvider, mediaRepo, challengeManager))
-		})
-		logger.Warn("debug endpoints enabled", "path", "/api/v1/debug/extract")
+		debugExtProvider, err := nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath)
+		if err != nil {
+			logger.Error("failed to init debug ai provider", "err", err)
+		} else {
+			srv.Router().Route("/api/v1/debug", func(r chi.Router) {
+				r.Post("/extract", jobs.HandleDebugExtract(browserProvider, debugExtProvider, mediaRepo, challengeManager))
+			})
+			logger.Warn("debug endpoints enabled", "path", "/api/v1/debug/extract")
+		}
 	}
 
 	// Mark ready after initialization is complete.
@@ -238,8 +243,15 @@ func runServe(args []string) error {
 	workerPool := worker.New(queueProvider, logger, 3) // Concurrency 3
 
 	// Setup Extraction Provider
-	lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
-	extProvider := nuextract.New(lmClient, cfg.AI.ModelDefault)
+	var extProvider extraction.Provider
+	if cfg.AI.LMStudioBaseURL != "" {
+		lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
+		extProvider, err = nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath)
+		if err != nil {
+			logger.Error("failed to init ai provider", "err", err)
+			extProvider = nil
+		}
+	}
 
 	extractHandler := jobs.NewExtractHandler(browserProvider, extProvider, mediaRepo, challengeManager)
 	workerPool.Register("extract_media", extractHandler)

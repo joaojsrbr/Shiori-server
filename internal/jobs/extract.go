@@ -145,8 +145,8 @@ func NewExtractHandler(
 			return fmt.Errorf("extraction failed: %w", err)
 		}
 
-		// 5. Persist to DB (assuming TargetMedia for now)
-		if payload.Target == extraction.TargetMedia {
+		// 5. Persist to DB (assuming TargetManga for now)
+		if payload.Target == extraction.TargetManga {
 			var createReq library.MediaCreateRequest
 			if err := json.Unmarshal(res.RawJSON, &createReq); err != nil {
 				return fmt.Errorf("failed to unmarshal extracted JSON to MediaCreateRequest: %w", err)
