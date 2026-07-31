@@ -8,16 +8,16 @@
     "authors": [],
     "artists": [],
     "status": "",
-    "genres": []
+    "genres": [],
+    "chapters": [
+      {
+        "number": "",
+        "title": "",
+        "url": "",
+        "date": ""
+      }
+    ]
   },
-  "chapters": [
-    {
-      "number": "",
-      "title": "",
-      "url": "",
-      "date": ""
-    }
-  ],
   "anime": {
     "type": "anime",
     "title": "",
@@ -26,14 +26,14 @@
     "cover_url": "",
     "studios": [],
     "status": "",
-    "genres": []
-  },
-  "episodes": [
-    {
-      "number": "",
-      "title": "",
-      "url": "",
-      "date": ""
-    }
-  ]
+    "genres": [],
+    "episodes": [
+      {
+        "number": "",
+        "title": "",
+        "url": "",
+        "date": ""
+      }
+    ]
+  }
 }
