@@ -113,27 +113,16 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 		return nil, fmt.Errorf("%w: %v", extraction.ErrModelUnavailable, err)
 	}
 
-	// Try to find raw JSON object in the output.
-	// LLMs may add conversational padding or markdown fences around the JSON.
-	start := strings.Index(inferOutput, "{")
-	if start == -1 {
-		return nil, fmt.Errorf("%w: no JSON object found in output", extraction.ErrExtractionFailed)
-	}
-
-	rawCandidate := inferOutput[start:]
-
-	// If the JSON is truncated (model ran out of tokens), attempt to repair it
-	// by balancing unclosed braces/brackets before validating.
-	jsonString, repaired := repairJSON(rawCandidate)
-
-	var dummy interface{}
-	if err := json.Unmarshal([]byte(jsonString), &dummy); err != nil {
-		return nil, fmt.Errorf("%w: output is not valid json: %v", extraction.ErrExtractionFailed, err)
+	// Extract the first complete JSON object from the output, repairing it if needed.
+	// Handles: LLM markdown fences, trailing commas, and truncated output.
+	jsonString, repaired, ok := extractAndRepairJSON(inferOutput)
+	if !ok {
+		return nil, fmt.Errorf("%w: no valid JSON object found in output", extraction.ErrExtractionFailed)
 	}
 
 	var warnings []string
 	if repaired {
-		warnings = append(warnings, "LLM output was truncated; JSON was auto-repaired and may be incomplete")
+		warnings = append(warnings, "LLM output required repair (trailing commas or truncation); result may be incomplete")
 	}
 
 	return &extraction.Result{
@@ -144,22 +133,134 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 	}, nil
 }
 
-// repairJSON attempts to close any unclosed JSON braces/brackets in a
-// potentially truncated LLM output. Returns the (possibly repaired) string
-// and a boolean indicating whether any repair was applied.
-func repairJSON(s string) (string, bool) {
-	// First try the string as-is (find last closing brace)
-	end := strings.LastIndex(s, "}")
-	if end != -1 {
-		candidate := s[:end+1]
-		var dummy interface{}
-		if json.Unmarshal([]byte(candidate), &dummy) == nil {
-			return candidate, false // already valid
+// extractAndRepairJSON extracts the first complete JSON object from s, repairing it if needed.
+// It handles:
+//   - LLM padding/markdown fences before/after the JSON
+//   - Trailing commas (e.g. `{"a": 1,}` or `[1, 2,]`)
+//   - Truncated output (model ran out of context budget)
+//
+// Returns (json string, wasRepaired, ok).
+func extractAndRepairJSON(s string) (string, bool, bool) {
+	start := strings.Index(s, "{")
+	if start == -1 {
+		return "", false, false
+	}
+	s = s[start:]
+
+	// Walk the JSON tracking brace depth to find end of the first complete object.
+	depth := 0
+	inString := false
+	escaped := false
+	end := -1
+
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch ch {
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+			if depth == 0 {
+				end = i
+			}
+		}
+		if depth == 0 && end != -1 {
+			break
 		}
 	}
 
-	// Output is truncated. Walk the string tracking open structures,
-	// then append the necessary closing characters.
+	var candidate string
+	repaired := false
+
+	if end != -1 {
+		// Complete (or apparently complete) JSON found
+		candidate = s[:end+1]
+	} else {
+		// Truncated: repair by closing open structures
+		repaired = true
+		candidate = repairTruncated(s)
+	}
+
+	// Strip trailing commas (very common LLM quirk: `"key": "val",}`)
+	cleaned, stripped := stripTrailingCommas(candidate)
+	if stripped {
+		repaired = true
+	}
+
+	var dummy interface{}
+	if err := json.Unmarshal([]byte(cleaned), &dummy); err != nil {
+		return "", false, false
+	}
+
+	return cleaned, repaired, true
+}
+
+// stripTrailingCommas removes trailing commas before `}` and `]` from JSON strings.
+// e.g. `{"a": 1,}` → `{"a": 1}`
+func stripTrailingCommas(s string) (string, bool) {
+	var b strings.Builder
+	b.Grow(len(s))
+	changed := false
+	runes := []rune(s)
+	inString := false
+	escaped := false
+
+	for i, r := range runes {
+		if escaped {
+			escaped = false
+			b.WriteRune(r)
+			continue
+		}
+		if r == '\\' && inString {
+			escaped = true
+			b.WriteRune(r)
+			continue
+		}
+		if r == '"' {
+			inString = !inString
+			b.WriteRune(r)
+			continue
+		}
+		if inString {
+			b.WriteRune(r)
+			continue
+		}
+		if r == ',' {
+			// Look ahead for the next non-whitespace character
+			next := ' '
+			for j := i + 1; j < len(runes); j++ {
+				if runes[j] != ' ' && runes[j] != '\t' && runes[j] != '\n' && runes[j] != '\r' {
+					next = runes[j]
+					break
+				}
+			}
+			if next == '}' || next == ']' {
+				changed = true
+				continue // skip the trailing comma
+			}
+		}
+		b.WriteRune(r)
+	}
+	return b.String(), changed
+}
+
+// repairTruncated closes unclosed braces/brackets in truncated JSON output.
+func repairTruncated(s string) string {
 	var stack []byte
 	inString := false
 	escaped := false
@@ -193,20 +294,12 @@ func repairJSON(s string) (string, bool) {
 		}
 	}
 
-	if len(stack) == 0 {
-		// Nothing to close; the JSON is just malformed in an unrecoverable way
-		return s, false
-	}
-
-	// Close unclosed string if we're still inside one
-	repaired := s
+	result := s
 	if inString {
-		repaired += "\""
+		result += "\""
 	}
-	// Close structures in reverse order
 	for i := len(stack) - 1; i >= 0; i-- {
-		repaired += string(stack[i])
+		result += string(stack[i])
 	}
-
-	return repaired, true
+	return result
 }

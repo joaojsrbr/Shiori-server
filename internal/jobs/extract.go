@@ -13,6 +13,7 @@ import (
 	"github.com/joaojsr/shiori-server/internal/extraction"
 	"github.com/joaojsr/shiori-server/internal/library"
 	"github.com/joaojsr/shiori-server/internal/platform/browser"
+	"github.com/joaojsr/shiori-server/internal/platform/events"
 	"github.com/joaojsr/shiori-server/internal/platform/queue"
 	"github.com/joaojsr/shiori-server/internal/worker"
 )
@@ -112,67 +113,101 @@ func distillHTML(htmlStr string) string {
 	return strings.Join(result, "\n")
 }
 
+// ExtractResponse is the response format for extraction progress and completion.
+type ExtractResponse struct {
+	URL        string                `json:"url"`
+	Target     extraction.TargetType `json:"target"`
+	AIOutput   json.RawMessage       `json:"ai_output"`
+	Confidence float64               `json:"confidence"`
+	Method     string                `json:"method"`
+	Warnings   []string              `json:"warnings,omitempty"`
+	Saved      bool                  `json:"saved"`
+	MediaID    string                `json:"media_id,omitempty"`
+}
+
 // NewExtractHandler returns a worker.Handler that executes the extraction pipeline.
 func NewExtractHandler(
 	b browser.Provider,
 	ext extraction.Provider,
 	repo library.MediaRepository,
 	cm *browser.ChallengeManager,
+	hub *events.Hub,
 ) worker.Handler {
 	return func(ctx context.Context, job *queue.Job) error {
+		topic := "job:" + job.ID
+
+		sendEvent := func(evt string, data any) {
+			if hub != nil {
+				hub.Publish(topic, map[string]any{"event": evt, "data": data})
+			}
+		}
+
+		sendError := func(title, detail string, err error) error {
+			sendEvent("error", map[string]string{"title": title, "detail": detail})
+			return fmt.Errorf("%s: %w", title, err)
+		}
+
 		// 1. Decode Payload
 		var payload ExtractPayload
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
-			return fmt.Errorf("invalid job payload: %w", err)
+			return sendError("Invalid Payload", "Failed to parse job payload", err)
 		}
 
 		if payload.URL == "" || payload.Target == "" {
-			return fmt.Errorf("missing url or target in payload")
+			return sendError("Invalid Request", "URL and Target are required", fmt.Errorf("missing parameters"))
 		}
 
 		// 2. Navigate and get HTML
+		sendEvent("progress", map[string]string{"step": "navigating", "message": "Loading page in browser..."})
 		navReq := browser.NavigateRequest{
 			URL: payload.URL,
 		}
 
 		navRes, err := b.Navigate(ctx, navReq)
 		if err != nil {
-			return fmt.Errorf("browser failed to navigate: %w", err)
+			return sendError("Browser Error", "Failed to navigate: "+err.Error(), err)
 		}
 
 		defer b.CloseSession(context.Background(), navRes.SessionID)
 
+		sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot..."})
 		snap, err := b.Snapshot(ctx, navRes.SessionID)
 		if err != nil {
-			return fmt.Errorf("browser failed to get snapshot: %w", err)
+			return sendError("Browser Error", "Failed to get snapshot: "+err.Error(), err)
 		}
 
 		if snap.UserAction {
 			token := cm.Create(navRes.SessionID)
 			slog.Info("user action required, waiting for challenge resolution", "token", token, "url", fmt.Sprintf("/api/v1/challenges/%s", token))
 
-			// We block the worker here. In a real system we would update the job status in the DB
-			// to "requires_user_action" and include the URL, but our queue/job interface doesn't
-			// support runtime status updates yet.
+			sendEvent("challenge", map[string]string{
+				"message":  "The page requires human interaction (captcha/cloudflare).",
+				"instance": fmt.Sprintf("http://localhost:8080/api/v1/challenges/%s", token),
+			})
+
+			// We block the worker here.
 			if err := cm.Wait(ctx, token); err != nil {
-				return fmt.Errorf("challenge failed or timed out: %w", err)
+				return sendError("Challenge Failed", "Challenge resolution failed or timed out", err)
 			}
 
 			// Take snapshot again after challenge is solved
+			sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot after challenge..."})
 			snap, err = b.Snapshot(ctx, navRes.SessionID)
 			if err != nil {
-				return fmt.Errorf("browser failed to get snapshot after challenge: %w", err)
+				return sendError("Browser Error", "Failed to get snapshot after challenge: "+err.Error(), err)
 			}
 			if snap.UserAction {
-				return fmt.Errorf("user action still required after challenge resolution")
+				return sendError("Challenge Failed", "User action still required after resolution", fmt.Errorf("user action still required"))
 			}
 		}
 
 		// 3. Sanitize HTML
+		sendEvent("progress", map[string]string{"step": "distilling", "message": "Cleaning HTML..."})
 		cleanHTML := distillHTML(snap.HTML)
 		slog.Debug("html distilled to markdown", "original_bytes", len(snap.HTML), "distilled_bytes", len(cleanHTML))
 
 		// 4. Extract structured data via AI
+		sendEvent("progress", map[string]string{"step": "extracting", "message": "Running AI extraction..."})
 		req := extraction.Request{
 			URL:     payload.URL,
 			Content: cleanHTML,
@@ -181,27 +216,44 @@ func NewExtractHandler(
 
 		res, err := ext.Extract(ctx, req)
 		if err != nil {
-			return fmt.Errorf("extraction failed: %w", err)
+			return sendError("Extraction Error", "AI extraction failed: "+err.Error(), err)
 		}
 
 		// 5. Persist to DB (assuming TargetManga for now)
+		sendEvent("progress", map[string]string{"step": "saving", "message": "Saving to database..."})
+		resp := ExtractResponse{
+			URL:        payload.URL,
+			Target:     payload.Target,
+			AIOutput:   res.RawJSON,
+			Confidence: res.Confidence,
+			Method:     res.Method,
+			Warnings:   res.Warnings,
+		}
+
 		if payload.Target == extraction.TargetManga {
 			var createReq library.MediaCreateRequest
 			if err := json.Unmarshal(res.RawJSON, &createReq); err != nil {
-				return fmt.Errorf("failed to unmarshal extracted JSON to MediaCreateRequest: %w", err)
+				resp.Warnings = append(resp.Warnings, "failed to unmarshal extracted JSON: "+err.Error())
+				err = fmt.Errorf("unmarshal error: %w", err) // Keep the error for logging but allow done event
+			} else {
+				createReq.SourceURL = payload.URL
+				media, dbErr := repo.Create(ctx, createReq)
+				if dbErr != nil {
+					resp.Warnings = append(resp.Warnings, "failed to save to database: "+dbErr.Error())
+					err = fmt.Errorf("db error: %w", dbErr)
+				} else {
+					resp.Saved = true
+					resp.MediaID = media.ID
+					slog.Info("successfully extracted and saved media", "title", createReq.Title)
+					err = nil
+				}
 			}
-			createReq.SourceURL = payload.URL
-
-			// Save to repo
-			_, err := repo.Create(ctx, createReq)
-			if err != nil {
-				return fmt.Errorf("failed to save media to database: %w", err)
-			}
-			slog.Info("successfully extracted and saved media", "title", createReq.Title, "raw_json", string(res.RawJSON))
 		} else {
-			return fmt.Errorf("unsupported target for persistence: %s", payload.Target)
+			resp.Warnings = append(resp.Warnings, "unsupported target for persistence: "+string(payload.Target))
+			err = fmt.Errorf("unsupported target")
 		}
 
-		return nil
+		sendEvent("done", resp)
+		return err
 	}
 }

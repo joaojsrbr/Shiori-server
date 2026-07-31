@@ -78,7 +78,7 @@ func TestExtractHandler_Success(t *testing.T) {
 	repo := &mockMediaRepoExtract{}
 	cm := browser.NewChallengeManager()
 
-	handler := jobs.NewExtractHandler(b, e, repo, cm)
+	handler := jobs.NewExtractHandler(b, e, repo, cm, nil)
 
 	payload := jobs.ExtractPayload{URL: "http://test.com", Target: extraction.TargetManga}
 	rawPayload, _ := json.Marshal(payload)
@@ -101,7 +101,7 @@ func TestExtractHandler_Failures(t *testing.T) {
 	repo := &mockMediaRepoExtract{}
 	cm := browser.NewChallengeManager()
 
-	handler := jobs.NewExtractHandler(b, e, repo, cm)
+	handler := jobs.NewExtractHandler(b, e, repo, cm, nil)
 	payload := jobs.ExtractPayload{URL: "http://test.com", Target: extraction.TargetManga}
 	rawPayload, _ := json.Marshal(payload)
 	job := &queue.Job{Payload: rawPayload}
