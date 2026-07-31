@@ -34,6 +34,7 @@ import (
 	"github.com/joaojsr/shiori-server/internal/platform/database"
 	"github.com/joaojsr/shiori-server/internal/platform/database/postgres"
 	"github.com/joaojsr/shiori-server/internal/platform/database/sqlite"
+	"github.com/joaojsr/shiori-server/internal/platform/events"
 	"github.com/joaojsr/shiori-server/internal/platform/httpserver"
 	"github.com/joaojsr/shiori-server/internal/platform/logging"
 	"github.com/joaojsr/shiori-server/internal/platform/queue"
@@ -208,7 +209,10 @@ func runServe(args []string) error {
 	// Register API routes
 	libHandler := library.NewHandler(mediaRepo)
 	aiHandler := ai.NewHandler(cfg.AI)
-	jobsHandler := jobs.NewHandler(queueProvider)
+
+	// Create Event Hub for SSE/PubSub
+	eventHub := events.NewHub()
+	jobsHandler := jobs.NewHandler(queueProvider, eventHub)
 
 	srv.Router().Route("/api/v1", func(r chi.Router) {
 		r.Get("/openapi.yaml", openapi.Handler())
@@ -253,7 +257,7 @@ func runServe(args []string) error {
 		}
 	}
 
-	extractHandler := jobs.NewExtractHandler(browserProvider, extProvider, mediaRepo, challengeManager)
+	extractHandler := jobs.NewExtractHandler(browserProvider, extProvider, mediaRepo, challengeManager, eventHub)
 	workerPool.Register("extract_media", extractHandler)
 
 	// Graceful shutdown context

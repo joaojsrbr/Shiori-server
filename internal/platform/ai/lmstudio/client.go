@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 // Model represents a model listed by LM Studio.
@@ -18,17 +19,24 @@ type Model struct {
 
 // Client is a generic HTTP client to interact with LM Studio local server.
 type Client struct {
-	baseURL    string
-	token      string
-	httpClient *http.Client
+	baseURL     string
+	token       string
+	httpClient  *http.Client // for quick operations (list models, load model)
+	inferClient *http.Client // for inference: no timeout (rely on ctx deadline)
 }
 
 // NewClient creates a new LM Studio client.
 func NewClient(baseURL, token string) *Client {
 	return &Client{
-		baseURL:    baseURL,
-		token:      token,
-		httpClient: &http.Client{},
+		baseURL: baseURL,
+		token:   token,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		inferClient: &http.Client{
+			// No built-in timeout: inference can take minutes.
+			// The caller must set a deadline on the context.
+		},
 	}
 }
 
@@ -134,7 +142,7 @@ func (c *Client) Infer(ctx context.Context, req InferRequest) (string, error) {
 		httpReq.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.inferClient.Do(httpReq)
 	if err != nil {
 		return "", fmt.Errorf("doing request: %w", err)
 	}

@@ -34,7 +34,7 @@ func (m *mockQueueProvider) Status(ctx context.Context, jobID string) (*queue.Jo
 
 func TestEnqueueExtract(t *testing.T) {
 	q := &mockQueueProvider{}
-	h := jobs.NewHandler(q)
+	h := jobs.NewHandler(q, nil)
 
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
@@ -57,7 +57,7 @@ func TestEnqueueExtract(t *testing.T) {
 
 func TestEnqueueExtract_Invalid(t *testing.T) {
 	q := &mockQueueProvider{}
-	h := jobs.NewHandler(q)
+	h := jobs.NewHandler(q, nil)
 
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)

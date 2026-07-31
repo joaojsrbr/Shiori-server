@@ -55,17 +55,38 @@ func HandleDebugExtract(
 			return
 		}
 
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			httpserver.RespondError(w, httpserver.Problem{
+				Status: http.StatusInternalServerError,
+				Title:  "SSE Not Supported",
+				Detail: "Streaming unsupported by client",
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		sendEvent := func(evt string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt, string(b))
+			flusher.Flush()
+		}
+
+		sendError := func(title, detail string) {
+			sendEvent("error", map[string]string{"title": title, "detail": detail})
+		}
+
 		ctx := r.Context()
 
 		// 2. Navigate and get HTML
+		sendEvent("progress", map[string]string{"step": "navigating", "message": "Loading page in browser..."})
 		navReq := browser.NavigateRequest{URL: payload.URL}
 		navRes, err := b.Navigate(ctx, navReq)
 		if err != nil {
-			httpserver.RespondError(w, httpserver.Problem{
-				Status: http.StatusBadGateway,
-				Title:  "Browser Error",
-				Detail: "Failed to navigate: " + err.Error(),
-			})
+			sendError("Browser Error", "Failed to navigate: "+err.Error())
 			return
 		}
 
@@ -78,13 +99,10 @@ func HandleDebugExtract(
 		}
 		defer closeSession()
 
+		sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot..."})
 		snap, err := b.Snapshot(ctx, navRes.SessionID)
 		if err != nil {
-			httpserver.RespondError(w, httpserver.Problem{
-				Status: http.StatusBadGateway,
-				Title:  "Browser Error",
-				Detail: "Failed to get snapshot: " + err.Error(),
-			})
+			sendError("Browser Error", "Failed to get snapshot: "+err.Error())
 			return
 		}
 
@@ -102,20 +120,20 @@ func HandleDebugExtract(
 				_ = cm.Wait(ctx, token)
 			}()
 
-			httpserver.RespondError(w, httpserver.Problem{
-				Status:   http.StatusConflict,
-				Title:    "User Action Required",
-				Detail:   "The page requires human interaction (captcha/cloudflare).",
-				Instance: fmt.Sprintf("http://localhost:8080/api/v1/challenges/%s", token),
+			sendEvent("challenge", map[string]string{
+				"message":  "The page requires human interaction (captcha/cloudflare).",
+				"instance": fmt.Sprintf("http://localhost:8080/api/v1/challenges/%s", token),
 			})
 			return
 		}
 
 		// 3. Sanitize HTML
+		sendEvent("progress", map[string]string{"step": "distilling", "message": "Cleaning HTML..."})
 		cleanHTML := distillHTML(snap.HTML)
 		slog.Debug("html distilled to markdown", "original_bytes", len(snap.HTML), "distilled_bytes", len(cleanHTML))
 
 		// 4. Extract via AI
+		sendEvent("progress", map[string]string{"step": "extracting", "message": "Running AI extraction..."})
 		extReq := extraction.Request{
 			URL:     payload.URL,
 			Content: cleanHTML,
@@ -124,15 +142,12 @@ func HandleDebugExtract(
 
 		res, err := ext.Extract(ctx, extReq)
 		if err != nil {
-			httpserver.RespondError(w, httpserver.Problem{
-				Status: http.StatusInternalServerError,
-				Title:  "Extraction Error",
-				Detail: "AI extraction failed: " + err.Error(),
-			})
+			sendError("Extraction Error", "AI extraction failed: "+err.Error())
 			return
 		}
 
 		// 5. Try to persist (best effort)
+		sendEvent("progress", map[string]string{"step": "saving", "message": "Saving to database..."})
 		resp := DebugExtractResponse{
 			URL:        payload.URL,
 			Target:     payload.Target,
@@ -158,6 +173,6 @@ func HandleDebugExtract(
 			}
 		}
 
-		httpserver.RespondJSON(w, http.StatusOK, resp)
+		sendEvent("done", resp)
 	}
 }
