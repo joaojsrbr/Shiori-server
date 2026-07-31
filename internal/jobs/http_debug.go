@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -111,7 +112,8 @@ func HandleDebugExtract(
 		}
 
 		// 3. Sanitize HTML
-		cleanHTML := sanitizeHTML(snap.HTML)
+		cleanHTML := distillHTML(snap.HTML)
+		slog.Debug("html distilled to markdown", "original_bytes", len(snap.HTML), "distilled_bytes", len(cleanHTML))
 
 		// 4. Extract via AI
 		extReq := extraction.Request{
