@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
+
+	"golang.org/x/net/html"
 
 	"github.com/joaojsr/shiori-server/internal/extraction"
 	"github.com/joaojsr/shiori-server/internal/library"
@@ -21,13 +22,52 @@ type ExtractPayload struct {
 	Target extraction.TargetType `json:"target"`
 }
 
-// scriptStyleRegex matches tags that contain no useful text for extraction (scripts, styles, svgs, etc) and HTML comments.
-var scriptStyleRegex = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>|<noscript[^>]*>.*?</noscript>|<svg[^>]*>.*?</svg>|<!--.*?-->`)
+// sanitizeHTML performs a deep cleanup to save LLM tokens by stripping useless tags and attributes.
+func sanitizeHTML(htmlStr string) string {
+	doc, err := html.Parse(strings.NewReader(htmlStr))
+	if err != nil {
+		return htmlStr // fallback to original if parsing fails
+	}
 
-// sanitizeHTML performs a lightweight cleanup to save LLM tokens.
-func sanitizeHTML(html string) string {
-	clean := scriptStyleRegex.ReplaceAllString(html, "")
-	// Optionally we could remove comments or collapse spaces here
+	removeTags := map[string]bool{
+		"script": true, "style": true, "noscript": true, "svg": true, "path": true,
+		"iframe": true, "nav": true, "footer": true, "header": true,
+		"link": true, "meta": true, "button": true,
+	}
+
+	var fNode func(*html.Node)
+	fNode = func(n *html.Node) {
+		for c := n.LastChild; c != nil; {
+			next := c.PrevSibling
+			if c.Type == html.ElementNode {
+				if removeTags[c.Data] {
+					n.RemoveChild(c)
+				} else {
+					var keep []html.Attribute
+					for _, a := range c.Attr {
+						// Only keep semantic attributes useful for extraction
+						if a.Key == "href" || a.Key == "src" || a.Key == "alt" || a.Key == "title" {
+							keep = append(keep, a)
+						}
+					}
+					c.Attr = keep
+					fNode(c)
+				}
+			} else if c.Type == html.CommentNode {
+				n.RemoveChild(c)
+			} else {
+				fNode(c)
+			}
+			c = next
+		}
+	}
+	fNode(doc)
+
+	var buf strings.Builder
+	html.Render(&buf, doc)
+	clean := buf.String()
+
+	// collapse whitespace
 	clean = strings.Join(strings.Fields(clean), " ")
 	return clean
 }
