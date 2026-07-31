@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/joaojsr/shiori-server/internal/extraction"
 	"github.com/joaojsr/shiori-server/internal/jobs"
@@ -33,7 +34,13 @@ func (m *mockBrowserProvider) Snapshot(ctx context.Context, sessionID string) (*
 	}
 	return &browser.PageSnapshot{HTML: m.HTMLReturn, UserAction: m.UserAction}, nil
 }
-func (m *mockBrowserProvider) CloseSession(ctx context.Context, sessionID string) error { return nil }
+func (m *mockBrowserProvider) CloseSession(ctx context.Context, sessionID string) error {
+	return nil
+}
+
+func (m *mockBrowserProvider) Screencast(ctx context.Context, sessionID string, frames chan<- []byte, input <-chan browser.InputEvent) error {
+	return nil
+}
 
 type mockExtractionProvider struct {
 	FailExtract bool
@@ -69,8 +76,9 @@ func TestExtractHandler_Success(t *testing.T) {
 	b := &mockBrowserProvider{HTMLReturn: "<html><body>Content</body></html>"}
 	e := &mockExtractionProvider{JSONReturn: json.RawMessage(`{"title": "Test Title"}`)}
 	repo := &mockMediaRepoExtract{}
+	cm := browser.NewChallengeManager()
 
-	handler := jobs.NewExtractHandler(b, e, repo)
+	handler := jobs.NewExtractHandler(b, e, repo, cm)
 
 	payload := jobs.ExtractPayload{URL: "http://test.com", Target: extraction.TargetMedia}
 	rawPayload, _ := json.Marshal(payload)
@@ -91,8 +99,9 @@ func TestExtractHandler_Failures(t *testing.T) {
 	b := &mockBrowserProvider{FailNavigate: true}
 	e := &mockExtractionProvider{}
 	repo := &mockMediaRepoExtract{}
+	cm := browser.NewChallengeManager()
 
-	handler := jobs.NewExtractHandler(b, e, repo)
+	handler := jobs.NewExtractHandler(b, e, repo, cm)
 	payload := jobs.ExtractPayload{URL: "http://test.com", Target: extraction.TargetMedia}
 	rawPayload, _ := json.Marshal(payload)
 	job := &queue.Job{Payload: rawPayload}
@@ -102,12 +111,14 @@ func TestExtractHandler_Failures(t *testing.T) {
 		t.Error("expected error due to navigation failure")
 	}
 
-	// Test user action required
+	// Test user action required timeout
 	b.FailNavigate = false
 	b.UserAction = true
-	err = handler(context.Background(), job)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err = handler(ctx, job)
 	if err == nil {
-		t.Error("expected error due to user action required")
+		t.Error("expected error due to user action timeout")
 	}
 
 	// Test extraction failure
