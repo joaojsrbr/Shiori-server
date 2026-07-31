@@ -159,6 +159,9 @@ func HandleDebugExtract(
 			URL:     payload.URL,
 			Content: cleanHTML,
 			Target:  payload.Target,
+			OnProgress: func(msg string) {
+				sendEvent("progress", map[string]string{"step": "extracting", "message": msg})
+			},
 		}
 
 		res, err := ext.Extract(ctx, extReq)

@@ -208,13 +208,16 @@ func NewExtractHandler(
 
 		// 4. Extract structured data via AI
 		sendEvent("progress", map[string]string{"step": "extracting", "message": "Running AI extraction..."})
-		req := extraction.Request{
+		extReq := extraction.Request{
 			URL:     payload.URL,
 			Content: cleanHTML,
 			Target:  payload.Target,
+			OnProgress: func(msg string) {
+				sendEvent("progress", map[string]string{"step": "extracting", "message": msg})
+			},
 		}
 
-		res, err := ext.Extract(ctx, req)
+		res, err := ext.Extract(ctx, extReq)
 		if err != nil {
 			return sendError("Extraction Error", "AI extraction failed: "+err.Error(), err)
 		}

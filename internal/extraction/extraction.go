@@ -33,6 +33,9 @@ type Request struct {
 
 	// The semantic entity we are looking for
 	Target TargetType
+
+	// Callback to report progress (e.g. processing chunks)
+	OnProgress func(string)
 }
 
 // Result represents the outcome of the extraction process.

@@ -67,6 +67,30 @@ func (p *Provider) getTemplateForTarget(target extraction.TargetType) (string, e
 	return string(tmpl), nil
 }
 
+// splitIntoChunks splits content by lines into chunks up to maxSize bytes.
+func splitIntoChunks(content string, maxSize int) []string {
+	if len(content) <= maxSize || maxSize <= 0 {
+		return []string{content}
+	}
+	var chunks []string
+	lines := strings.Split(content, "\n")
+	var currentChunk strings.Builder
+
+	for _, line := range lines {
+		// If a single line is larger than maxSize, we still have to add it.
+		if currentChunk.Len()+len(line)+1 > maxSize && currentChunk.Len() > 0 {
+			chunks = append(chunks, currentChunk.String())
+			currentChunk.Reset()
+		}
+		currentChunk.WriteString(line)
+		currentChunk.WriteString("\n")
+	}
+	if currentChunk.Len() > 0 {
+		chunks = append(chunks, currentChunk.String())
+	}
+	return chunks
+}
+
 // Extract invokes NuExtract logic via inference.
 func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extraction.Result, error) {
 	schema, err := p.getTemplateForTarget(req.Target)
@@ -74,61 +98,90 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 		return nil, fmt.Errorf("getting schema: %w", err)
 	}
 
-	// Truncate content to stay within the model's context window.
-	// UTF-8 safe: truncate on rune boundary.
-	content := req.Content
-	if p.maxContentBytes > 0 && len(content) > p.maxContentBytes {
-		// Walk runes until we exceed the limit
-		truncated := content[:p.maxContentBytes]
-		// Walk backward to find a valid UTF-8 boundary
-		for len(truncated) > 0 {
-			if truncated[len(truncated)-1]&0xC0 != 0x80 {
-				break
-			}
-			truncated = truncated[:len(truncated)-1]
+	// For chunking, we limit each chunk to ~20000 bytes (approx 5k tokens),
+	// leaving plenty of room for 16k context models.
+	chunkSize := 20000
+	if p.maxContentBytes > 0 && p.maxContentBytes < chunkSize {
+		chunkSize = p.maxContentBytes
+	}
+	chunks := splitIntoChunks(req.Content, chunkSize)
+
+	var baseJSON map[string]interface{}
+	var allWarnings []string
+	var finalRepaired bool
+
+	for i, chunk := range chunks {
+		if req.OnProgress != nil {
+			req.OnProgress(fmt.Sprintf("Running AI extraction (chunk %d of %d)...", i+1, len(chunks)))
 		}
-		content = truncated
-	}
 
-	// Format NuExtract prompt
-	// <|input|>\n{CONTENT}\n<|template|>\n{SCHEMA}
-	prompt := fmt.Sprintf("<|input|>\n%s\n<|template|>\n%s", content, schema)
+		prompt := fmt.Sprintf("<|input|>\n%s\n<|template|>\n%s", chunk, schema)
 
-	inferReq := lmstudio.InferRequest{
-		Model: p.modelName,
-		Messages: []lmstudio.ChatMessage{
-			{
-				Role:    "user",
-				Content: prompt,
+		inferReq := lmstudio.InferRequest{
+			Model: p.modelName,
+			Messages: []lmstudio.ChatMessage{
+				{
+					Role:    "user",
+					Content: prompt,
+				},
 			},
-		},
-		Temperature: 0.0,
-		// Keep MaxTokens moderate but large enough for hundreds of chapters.
-		MaxTokens: 16384,
+			Temperature: 0.0,
+			MaxTokens:   16384,
+		}
+
+		inferOutput, err := p.client.Infer(ctx, inferReq)
+		if err != nil {
+			return nil, fmt.Errorf("%w: chunk %d: %v", extraction.ErrModelUnavailable, i+1, err)
+		}
+
+		jsonString, repaired, ok := extractAndRepairJSON(inferOutput)
+		if !ok {
+			if i == 0 {
+				return nil, fmt.Errorf("%w: chunk 1: no valid JSON object found in output", extraction.ErrExtractionFailed)
+			}
+			allWarnings = append(allWarnings, fmt.Sprintf("chunk %d: no valid JSON object found, skipped", i+1))
+			continue
+		}
+		if repaired {
+			finalRepaired = true
+		}
+
+		var parsed map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonString), &parsed); err != nil {
+			if i == 0 {
+				return nil, fmt.Errorf("%w: chunk 1: invalid json: %v", extraction.ErrExtractionFailed, err)
+			}
+			allWarnings = append(allWarnings, fmt.Sprintf("chunk %d: invalid json, skipped", i+1))
+			continue
+		}
+
+		if i == 0 {
+			baseJSON = parsed
+		} else {
+			// Merge lists (arrays) from parsed into baseJSON
+			for k, v := range parsed {
+				if parsedList, ok := v.([]interface{}); ok {
+					if baseList, ok := baseJSON[k].([]interface{}); ok {
+						baseJSON[k] = append(baseList, parsedList...)
+					} else if baseJSON[k] == nil {
+						baseJSON[k] = parsedList
+					}
+				}
+			}
+		}
 	}
 
-	inferOutput, err := p.client.Infer(ctx, inferReq)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", extraction.ErrModelUnavailable, err)
-	}
+	finalBytes, _ := json.MarshalIndent(baseJSON, "", "  ")
 
-	// Extract the first complete JSON object from the output, repairing it if needed.
-	// Handles: LLM markdown fences, trailing commas, and truncated output.
-	jsonString, repaired, ok := extractAndRepairJSON(inferOutput)
-	if !ok {
-		return nil, fmt.Errorf("%w: no valid JSON object found in output", extraction.ErrExtractionFailed)
-	}
-
-	var warnings []string
-	if repaired {
-		warnings = append(warnings, "LLM output required repair (trailing commas or truncation); result may be incomplete")
+	if finalRepaired {
+		allWarnings = append(allWarnings, "LLM output required repair (trailing commas or truncation); result may be incomplete")
 	}
 
 	return &extraction.Result{
-		RawJSON:    json.RawMessage(jsonString),
+		RawJSON:    json.RawMessage(finalBytes),
 		Confidence: 0.85,
 		Method:     p.modelName,
-		Warnings:   warnings,
+		Warnings:   allWarnings,
 	}, nil
 }
 
