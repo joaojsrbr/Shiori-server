@@ -69,7 +69,7 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 func (c *Client) LoadModel(ctx context.Context, modelName string) error {
 	payload := map[string]any{
 		"model":            modelName,
-		"context_length":   65536,
+		"context_length":   23000,
 		"flash_attention":  true,
 		"echo_load_config": true,
 	}
