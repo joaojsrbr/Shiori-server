@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,7 +37,12 @@ func HandleDebugExtract(
 	cm *browser.ChallengeManager,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var payload ExtractPayload
+		var payload struct {
+			URL           string                `json:"url"`
+			Target        extraction.TargetType `json:"target"`
+			AutoScroll    bool                  `json:"auto_scroll,omitempty"`
+			ClickSelector string                `json:"click_selector,omitempty"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			httpserver.RespondError(w, httpserver.Problem{
 				Status: http.StatusBadRequest,
@@ -102,88 +107,122 @@ func HandleDebugExtract(
 			}
 		}()
 
-		// 2. Navigate and get HTML
-		sendEvent("progress", map[string]string{"step": "navigating", "message": "Loading page in browser..."})
-		navReq := browser.NavigateRequest{URL: payload.URL}
-		navRes, err := b.Navigate(ctx, navReq)
-		if err != nil {
-			sendError("Browser Error", "Failed to navigate: "+err.Error())
-			return
-		}
+		var finalResultJSON map[string]interface{}
+		currentURL := payload.URL
+		pageCount := 1
+		var lastRes *extraction.Result
+		var loopErr error
 
-		sessionClosed := false
-		closeSession := func() {
-			if !sessionClosed {
-				b.CloseSession(context.Background(), navRes.SessionID)
-				sessionClosed = true
+		for {
+			sendEvent("progress", map[string]string{"step": "navigating", "message": fmt.Sprintf("Loading page %d in browser...", pageCount)})
+			navReq := browser.NavigateRequest{
+				URL:           currentURL,
+				AutoScroll:    payload.AutoScroll,
+				ClickSelector: payload.ClickSelector,
 			}
+
+			navRes, err := b.Navigate(ctx, navReq)
+			if err != nil {
+				sendError("Browser Error", "Failed to navigate: "+err.Error())
+				return
+			}
+
+			sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot..."})
+			snap, err := b.Snapshot(ctx, navRes.SessionID)
+			if err != nil {
+				b.CloseSession(context.Background(), navRes.SessionID)
+				sendError("Browser Error", "Failed to get snapshot: "+err.Error())
+				return
+			}
+
+			if snap.UserAction {
+				b.CloseSession(context.Background(), navRes.SessionID)
+				token := cm.Create(navRes.SessionID) // This is technically invalid since session is closed, but debug handler is sync and won't wait.
+				sendEvent("challenge", map[string]string{
+					"message":  "The page requires human interaction (captcha/cloudflare). Debug endpoint cannot wait.",
+					"instance": fmt.Sprintf("http://localhost:9180/api/v1/challenges/%s", token),
+				})
+				return
+			}
+
+			b.CloseSession(context.Background(), navRes.SessionID)
+
+			sendEvent("progress", map[string]string{"step": "distilling", "message": "Cleaning HTML..."})
+			cleanHTML := distillHTML(snap.HTML)
+
+			sendEvent("progress", map[string]string{"step": "extracting", "message": fmt.Sprintf("Running AI extraction for page %d...", pageCount)})
+			extReq := extraction.Request{
+				URL:     currentURL,
+				Content: cleanHTML,
+				Target:  payload.Target,
+				OnProgress: func(msg string) {
+					sendEvent("progress", map[string]string{"step": "extracting", "message": msg})
+				},
+			}
+
+			lastRes, loopErr = ext.Extract(ctx, extReq)
+			if loopErr != nil {
+				sendError("Extraction Error", "AI extraction failed: "+loopErr.Error())
+				return
+			}
+
+			var parsed map[string]interface{}
+			if err := json.Unmarshal(lastRes.RawJSON, &parsed); err != nil {
+				sendError("Extraction Error", "Invalid JSON from AI")
+				return
+			}
+
+			if finalResultJSON == nil {
+				finalResultJSON = parsed
+			} else {
+				for k, v := range parsed {
+					if parsedList, ok := v.([]interface{}); ok {
+						if baseList, ok := finalResultJSON[k].([]interface{}); ok {
+							finalResultJSON[k] = append(baseList, parsedList...)
+						} else if finalResultJSON[k] == nil {
+							finalResultJSON[k] = parsedList
+						}
+					}
+				}
+			}
+
+			nextURL, ok := parsed["next_page_url"].(string)
+			if !ok || nextURL == "" || nextURL == currentURL {
+				break
+			}
+
+			if !strings.HasPrefix(nextURL, "http") {
+				if strings.HasPrefix(nextURL, "/") {
+					parts := strings.Split(currentURL, "/")
+					if len(parts) >= 3 {
+						nextURL = parts[0] + "//" + parts[2] + nextURL
+					}
+				} else {
+					break
+				}
+			}
+
+			currentURL = nextURL
+			pageCount++
 		}
-		defer closeSession()
 
-		sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot..."})
-		snap, err := b.Snapshot(ctx, navRes.SessionID)
-		if err != nil {
-			sendError("Browser Error", "Failed to get snapshot: "+err.Error())
-			return
-		}
-
-		if snap.UserAction {
-			token := cm.Create(navRes.SessionID)
-
-			// We take ownership of closing the session so it stays alive for the challenge
-			sessionClosed = true
-			go func() {
-				defer b.CloseSession(context.Background(), navRes.SessionID)
-
-				// Keep it alive until resolved or timed out (e.g. 5 minutes)
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-				defer cancel()
-				_ = cm.Wait(ctx, token)
-			}()
-
-			sendEvent("challenge", map[string]string{
-				"message":  "The page requires human interaction (captcha/cloudflare).",
-				"instance": fmt.Sprintf("http://localhost:9180/api/v1/challenges/%s", token),
-			})
-			return
-		}
-
-		// 3. Sanitize HTML
-		sendEvent("progress", map[string]string{"step": "distilling", "message": "Cleaning HTML..."})
-		cleanHTML := distillHTML(snap.HTML)
-		slog.Debug("html distilled to markdown", "original_bytes", len(snap.HTML), "distilled_bytes", len(cleanHTML))
-
-		// 4. Extract via AI
-		sendEvent("progress", map[string]string{"step": "extracting", "message": "Running AI extraction..."})
-		extReq := extraction.Request{
-			URL:     payload.URL,
-			Content: cleanHTML,
-			Target:  payload.Target,
-			OnProgress: func(msg string) {
-				sendEvent("progress", map[string]string{"step": "extracting", "message": msg})
-			},
-		}
-
-		res, err := ext.Extract(ctx, extReq)
-		if err != nil {
-			sendError("Extraction Error", "AI extraction failed: "+err.Error())
-			return
-		}
+		finalBytes, _ := json.MarshalIndent(finalResultJSON, "", "  ")
+		finalRaw := json.RawMessage(finalBytes)
 
 		// 5. Try to persist (best effort)
 		sendEvent("progress", map[string]string{"step": "saving", "message": "Saving to database..."})
 		resp := DebugExtractResponse{
 			URL:        payload.URL,
 			Target:     payload.Target,
-			AIOutput:   res.RawJSON,
-			Confidence: res.Confidence,
-			Method:     res.Method,
-			Warnings:   res.Warnings,
+			AIOutput:   finalRaw,
+			Confidence: lastRes.Confidence,
+			Method:     lastRes.Method,
+			Warnings:   lastRes.Warnings,
 		}
 
 		if payload.Target == extraction.TargetManga {
 			var createReq library.MediaCreateRequest
-			if err := json.Unmarshal(res.RawJSON, &createReq); err == nil {
+			if err := json.Unmarshal(finalRaw, &createReq); err == nil {
 				createReq.SourceURL = payload.URL
 				media, err := repo.Create(ctx, createReq)
 				if err == nil {

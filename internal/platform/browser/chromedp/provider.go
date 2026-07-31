@@ -13,6 +13,7 @@ import (
 
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/google/uuid"
 	"github.com/joaojsr/shiori-server/internal/platform/browser"
@@ -114,6 +115,68 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 	}
 	if req.WaitFor != "" {
 		actions = append(actions, chromedp.WaitReady(req.WaitFor, chromedp.ByQuery))
+	}
+
+	if req.AutoScroll {
+		scrollJS := `
+			new Promise((resolve) => {
+				let lastHeight = 0;
+				let retries = 0;
+				let maxRetries = 3;
+				const scrollInterval = setInterval(() => {
+					window.scrollTo(0, document.body.scrollHeight);
+					let newHeight = document.body.scrollHeight;
+					if (newHeight === lastHeight) {
+						retries++;
+						if (retries >= maxRetries) {
+							clearInterval(scrollInterval);
+							resolve();
+						}
+					} else {
+						lastHeight = newHeight;
+						retries = 0;
+					}
+				}, 1000);
+			});
+		`
+		actions = append(actions, chromedp.Evaluate(scrollJS, nil, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}))
+	}
+
+	if req.ClickSelector != "" {
+		clickJS := fmt.Sprintf(`
+			new Promise((resolve) => {
+				const sel = %q;
+				let btn = document.querySelector(sel);
+				if (!btn) return resolve();
+				
+				let clicks = 0;
+				let maxClicks = 30; // Sanity limit
+				
+				const observer = new MutationObserver(() => {
+					// Disconnect temporarily so our own click doesn't trigger it if it modifies DOM sync
+					observer.disconnect();
+					setTimeout(() => tryClick(), 800);
+				});
+				
+				function tryClick() {
+					btn = document.querySelector(sel);
+					if (!btn || btn.disabled || clicks >= maxClicks || btn.offsetParent === null) {
+						resolve();
+						return;
+					}
+					clicks++;
+					observer.observe(document.body, { childList: true, subtree: true });
+					btn.click();
+				}
+				
+				tryClick();
+			});
+		`, req.ClickSelector)
+		actions = append(actions, chromedp.Evaluate(clickJS, nil, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}))
 	}
 
 	var finalURL string

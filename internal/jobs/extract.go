@@ -20,8 +20,10 @@ import (
 
 // ExtractPayload defines the JSON payload expected in the job.
 type ExtractPayload struct {
-	URL    string                `json:"url"`
-	Target extraction.TargetType `json:"target"`
+	URL           string                `json:"url"`
+	Target        extraction.TargetType `json:"target"`
+	AutoScroll    bool                  `json:"auto_scroll,omitempty"`
+	ClickSelector string                `json:"click_selector,omitempty"`
 }
 
 // stripNoisyTags performs a first-pass deep cleanup removing elements that
@@ -157,106 +159,166 @@ func NewExtractHandler(
 			return sendError("Invalid Request", "URL and Target are required", fmt.Errorf("missing parameters"))
 		}
 
-		// 2. Navigate and get HTML
-		sendEvent("progress", map[string]string{"step": "navigating", "message": "Loading page in browser..."})
-		navReq := browser.NavigateRequest{
-			URL: payload.URL,
-		}
+		var finalResultJSON map[string]interface{}
+		currentURL := payload.URL
+		pageCount := 1
+		var lastRes *extraction.Result
+		var loopErr error
 
-		navRes, err := b.Navigate(ctx, navReq)
-		if err != nil {
-			return sendError("Browser Error", "Failed to navigate: "+err.Error(), err)
-		}
-
-		defer b.CloseSession(context.Background(), navRes.SessionID)
-
-		sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot..."})
-		snap, err := b.Snapshot(ctx, navRes.SessionID)
-		if err != nil {
-			return sendError("Browser Error", "Failed to get snapshot: "+err.Error(), err)
-		}
-
-		if snap.UserAction {
-			token := cm.Create(navRes.SessionID)
-			slog.Info("user action required, waiting for challenge resolution", "token", token, "url", fmt.Sprintf("/api/v1/challenges/%s", token))
-
-			sendEvent("challenge", map[string]string{
-				"message":  "The page requires human interaction (captcha/cloudflare).",
-				"instance": fmt.Sprintf("http://localhost:9180/api/v1/challenges/%s", token),
-			})
-
-			// We block the worker here.
-			if err := cm.Wait(ctx, token); err != nil {
-				return sendError("Challenge Failed", "Challenge resolution failed or timed out", err)
+		for {
+			// 2. Navigate and get HTML
+			sendEvent("progress", map[string]string{"step": "navigating", "message": fmt.Sprintf("Loading page %d in browser...", pageCount)})
+			navReq := browser.NavigateRequest{
+				URL:           currentURL,
+				AutoScroll:    payload.AutoScroll,
+				ClickSelector: payload.ClickSelector,
 			}
 
-			// Take snapshot again after challenge is solved
-			sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot after challenge..."})
-			snap, err = b.Snapshot(ctx, navRes.SessionID)
+			navRes, err := b.Navigate(ctx, navReq)
 			if err != nil {
-				return sendError("Browser Error", "Failed to get snapshot after challenge: "+err.Error(), err)
+				return sendError("Browser Error", "Failed to navigate: "+err.Error(), err)
 			}
+
+			sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot..."})
+			snap, err := b.Snapshot(ctx, navRes.SessionID)
+			if err != nil {
+				b.CloseSession(context.Background(), navRes.SessionID)
+				return sendError("Browser Error", "Failed to get snapshot: "+err.Error(), err)
+			}
+
 			if snap.UserAction {
-				return sendError("Challenge Failed", "User action still required after resolution", fmt.Errorf("user action still required"))
+				token := cm.Create(navRes.SessionID)
+				slog.Info("user action required, waiting for challenge resolution", "token", token, "url", fmt.Sprintf("/api/v1/challenges/%s", token))
+
+				sendEvent("challenge", map[string]string{
+					"message":  "The page requires human interaction (captcha/cloudflare).",
+					"instance": fmt.Sprintf("http://localhost:9180/api/v1/challenges/%s", token),
+				})
+
+				// We block the worker here.
+				if err := cm.Wait(ctx, token); err != nil {
+					b.CloseSession(context.Background(), navRes.SessionID)
+					return sendError("Challenge Failed", "Challenge resolution failed or timed out", err)
+				}
+
+				// Take snapshot again after challenge is solved
+				sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot after challenge..."})
+				snap, err = b.Snapshot(ctx, navRes.SessionID)
+				if err != nil {
+					b.CloseSession(context.Background(), navRes.SessionID)
+					return sendError("Browser Error", "Failed to get snapshot after challenge: "+err.Error(), err)
+				}
+				if snap.UserAction {
+					b.CloseSession(context.Background(), navRes.SessionID)
+					return sendError("Challenge Failed", "User action still required after resolution", fmt.Errorf("user action still required"))
+				}
 			}
+
+			// Close session after snapshot
+			b.CloseSession(context.Background(), navRes.SessionID)
+
+			// 3. Sanitize HTML
+			sendEvent("progress", map[string]string{"step": "distilling", "message": "Cleaning HTML..."})
+			cleanHTML := distillHTML(snap.HTML)
+			slog.Debug("html distilled to markdown", "original_bytes", len(snap.HTML), "distilled_bytes", len(cleanHTML))
+
+			// 4. Extract structured data via AI
+			sendEvent("progress", map[string]string{"step": "extracting", "message": fmt.Sprintf("Running AI extraction for page %d...", pageCount)})
+			extReq := extraction.Request{
+				URL:     currentURL,
+				Content: cleanHTML,
+				Target:  payload.Target,
+				OnProgress: func(msg string) {
+					sendEvent("progress", map[string]string{"step": "extracting", "message": msg})
+				},
+			}
+
+			lastRes, loopErr = ext.Extract(ctx, extReq)
+			if loopErr != nil {
+				return sendError("Extraction Error", "AI extraction failed: "+loopErr.Error(), loopErr)
+			}
+
+			var parsed map[string]interface{}
+			if err := json.Unmarshal(lastRes.RawJSON, &parsed); err != nil {
+				return sendError("Extraction Error", "Invalid JSON from AI", err)
+			}
+
+			if finalResultJSON == nil {
+				finalResultJSON = parsed
+			} else {
+				// Merge arrays
+				for k, v := range parsed {
+					if parsedList, ok := v.([]interface{}); ok {
+						if baseList, ok := finalResultJSON[k].([]interface{}); ok {
+							finalResultJSON[k] = append(baseList, parsedList...)
+						} else if finalResultJSON[k] == nil {
+							finalResultJSON[k] = parsedList
+						}
+					}
+				}
+			}
+
+			// Check pagination
+			nextURL, ok := parsed["next_page_url"].(string)
+			if !ok || nextURL == "" || nextURL == currentURL {
+				break
+			}
+
+			// Resolve relative URLs if needed
+			if !strings.HasPrefix(nextURL, "http") {
+				if strings.HasPrefix(nextURL, "/") {
+					// Extremely basic relative resolution for simplicity
+					parts := strings.Split(currentURL, "/")
+					if len(parts) >= 3 {
+						nextURL = parts[0] + "//" + parts[2] + nextURL
+					}
+				} else {
+					break // Unhandled relative format, stop to avoid infinite loops
+				}
+			}
+
+			currentURL = nextURL
+			pageCount++
 		}
 
-		// 3. Sanitize HTML
-		sendEvent("progress", map[string]string{"step": "distilling", "message": "Cleaning HTML..."})
-		cleanHTML := distillHTML(snap.HTML)
-		slog.Debug("html distilled to markdown", "original_bytes", len(snap.HTML), "distilled_bytes", len(cleanHTML))
+		finalBytes, _ := json.MarshalIndent(finalResultJSON, "", "  ")
+		finalRaw := json.RawMessage(finalBytes)
 
-		// 4. Extract structured data via AI
-		sendEvent("progress", map[string]string{"step": "extracting", "message": "Running AI extraction..."})
-		extReq := extraction.Request{
-			URL:     payload.URL,
-			Content: cleanHTML,
-			Target:  payload.Target,
-			OnProgress: func(msg string) {
-				sendEvent("progress", map[string]string{"step": "extracting", "message": msg})
-			},
-		}
-
-		res, err := ext.Extract(ctx, extReq)
-		if err != nil {
-			return sendError("Extraction Error", "AI extraction failed: "+err.Error(), err)
-		}
-
-		// 5. Persist to DB (assuming TargetManga for now)
+		// 5. Persist to DB
 		sendEvent("progress", map[string]string{"step": "saving", "message": "Saving to database..."})
 		resp := ExtractResponse{
 			URL:        payload.URL,
 			Target:     payload.Target,
-			AIOutput:   res.RawJSON,
-			Confidence: res.Confidence,
-			Method:     res.Method,
-			Warnings:   res.Warnings,
+			AIOutput:   finalRaw,
+			Confidence: lastRes.Confidence,
+			Method:     lastRes.Method,
+			Warnings:   lastRes.Warnings,
 		}
 
 		if payload.Target == extraction.TargetManga {
 			var createReq library.MediaCreateRequest
-			if err := json.Unmarshal(res.RawJSON, &createReq); err != nil {
+			if err := json.Unmarshal(finalRaw, &createReq); err != nil {
 				resp.Warnings = append(resp.Warnings, "failed to unmarshal extracted JSON: "+err.Error())
-				err = fmt.Errorf("unmarshal error: %w", err) // Keep the error for logging but allow done event
+				loopErr = fmt.Errorf("unmarshal error: %w", err) // Keep the error for logging but allow done event
 			} else {
 				createReq.SourceURL = payload.URL
 				media, dbErr := repo.Create(ctx, createReq)
 				if dbErr != nil {
 					resp.Warnings = append(resp.Warnings, "failed to save to database: "+dbErr.Error())
-					err = fmt.Errorf("db error: %w", dbErr)
+					loopErr = fmt.Errorf("db error: %w", dbErr)
 				} else {
 					resp.Saved = true
 					resp.MediaID = media.ID
 					slog.Info("successfully extracted and saved media", "title", createReq.Title)
-					err = nil
+					loopErr = nil
 				}
 			}
 		} else {
 			resp.Warnings = append(resp.Warnings, "unsupported target for persistence: "+string(payload.Target))
-			err = fmt.Errorf("unsupported target")
+			loopErr = fmt.Errorf("unsupported target")
 		}
 
 		sendEvent("done", resp)
-		return err
+		return loopErr
 	}
 }

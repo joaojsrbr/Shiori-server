@@ -16,7 +16,8 @@
         "url": "",
         "date": ""
       }
-    ]
+    ],
+    "next_page_url": ""
   },
   "anime": {
     "type": "anime",
@@ -34,6 +35,7 @@
         "url": "",
         "date": ""
       }
-    ]
+    ],
+    "next_page_url": ""
   }
 }
