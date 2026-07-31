@@ -103,9 +103,8 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 			},
 		},
 		Temperature: 0.0,
-		// Keep MaxTokens moderate: enough for the schema output but won't exhaust
-		// the context budget left after the (potentially large) input prompt.
-		MaxTokens: 4096,
+		// Keep MaxTokens moderate but large enough for hundreds of chapters.
+		MaxTokens: 16384,
 	}
 
 	inferOutput, err := p.client.Infer(ctx, inferReq)

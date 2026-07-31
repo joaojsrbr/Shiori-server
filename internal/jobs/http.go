@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/joaojsr/shiori-server/internal/library"
@@ -124,10 +125,18 @@ func (h *Handler) JobEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Keep alive loop or wait for events
 	ctx := r.Context()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-ticker.C:
+			// Send a heartbeat comment to keep the connection alive
+			// Most proxies/browsers drop idle connections after 60-120s
+			fmt.Fprintf(w, ": heartbeat\n\n")
+			flusher.Flush()
 		case eventData := <-ch:
 			// eventData is map[string]any{"event": evt, "data": data}
 			if m, ok := eventData.(map[string]any); ok {

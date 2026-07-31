@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/joaojsr/shiori-server/internal/extraction"
@@ -69,10 +70,13 @@ func HandleDebugExtract(
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 
+		var mu sync.Mutex
 		sendEvent := func(evt string, data any) {
 			b, _ := json.Marshal(data)
+			mu.Lock()
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt, string(b))
 			flusher.Flush()
+			mu.Unlock()
 		}
 
 		sendError := func(title, detail string) {
@@ -80,6 +84,23 @@ func HandleDebugExtract(
 		}
 
 		ctx := r.Context()
+
+		// Keep alive heartbeat to prevent idle connection drop
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					mu.Lock()
+					fmt.Fprintf(w, ": heartbeat\n\n")
+					flusher.Flush()
+					mu.Unlock()
+				}
+			}
+		}()
 
 		// 2. Navigate and get HTML
 		sendEvent("progress", map[string]string{"step": "navigating", "message": "Loading page in browser..."})
