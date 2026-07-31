@@ -80,7 +80,7 @@ func TestExtractHandler_Success(t *testing.T) {
 
 	handler := jobs.NewExtractHandler(b, e, repo, cm)
 
-	payload := jobs.ExtractPayload{URL: "http://test.com", Target: extraction.TargetMedia}
+	payload := jobs.ExtractPayload{URL: "http://test.com", Target: extraction.TargetManga}
 	rawPayload, _ := json.Marshal(payload)
 
 	job := &queue.Job{Payload: rawPayload}
@@ -102,7 +102,7 @@ func TestExtractHandler_Failures(t *testing.T) {
 	cm := browser.NewChallengeManager()
 
 	handler := jobs.NewExtractHandler(b, e, repo, cm)
-	payload := jobs.ExtractPayload{URL: "http://test.com", Target: extraction.TargetMedia}
+	payload := jobs.ExtractPayload{URL: "http://test.com", Target: extraction.TargetManga}
 	rawPayload, _ := json.Marshal(payload)
 	job := &queue.Job{Payload: rawPayload}
 

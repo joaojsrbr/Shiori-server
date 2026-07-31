@@ -1,0 +1,39 @@
+{
+  "manga": {
+    "type": "manga",
+    "title": "",
+    "alternative_titles": [],
+    "description": "",
+    "cover_url": "",
+    "authors": [],
+    "artists": [],
+    "status": "",
+    "genres": []
+  },
+  "chapters": [
+    {
+      "number": "",
+      "title": "",
+      "url": "",
+      "date": ""
+    }
+  ],
+  "anime": {
+    "type": "anime",
+    "title": "",
+    "alternative_titles": [],
+    "description": "",
+    "cover_url": "",
+    "studios": [],
+    "status": "",
+    "genres": []
+  },
+  "episodes": [
+    {
+      "number": "",
+      "title": "",
+      "url": "",
+      "date": ""
+    }
+  ]
+}

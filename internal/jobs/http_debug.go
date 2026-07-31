@@ -140,7 +140,7 @@ func HandleDebugExtract(
 			Warnings:   res.Warnings,
 		}
 
-		if payload.Target == extraction.TargetMedia {
+		if payload.Target == extraction.TargetManga {
 			var createReq library.MediaCreateRequest
 			if err := json.Unmarshal(res.RawJSON, &createReq); err == nil {
 				createReq.SourceURL = payload.URL

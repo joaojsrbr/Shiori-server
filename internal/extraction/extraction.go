@@ -10,8 +10,10 @@ import (
 type TargetType string
 
 const (
-	TargetMedia       TargetType = "media"
-	TargetChapterList TargetType = "chapter_list"
+	TargetManga         TargetType = "manga"
+	TargetMangaChapters TargetType = "manga_chapters"
+	TargetAnime         TargetType = "anime"
+	TargetAnimeEpisodes TargetType = "anime_episodes"
 )
 
 var (
