@@ -53,7 +53,8 @@ func stripNoisyTags(htmlStr string) string {
 	fNode = func(n *html.Node) {
 		for c := n.LastChild; c != nil; {
 			next := c.PrevSibling
-			if c.Type == html.ElementNode {
+			switch c.Type {
+			case html.ElementNode:
 				if removeTags[c.Data] {
 					n.RemoveChild(c)
 				} else {
@@ -66,9 +67,9 @@ func stripNoisyTags(htmlStr string) string {
 					c.Attr = keep
 					fNode(c)
 				}
-			} else if c.Type == html.CommentNode {
+			case html.CommentNode:
 				n.RemoveChild(c)
-			} else {
+			default:
 				fNode(c)
 			}
 			c = next
