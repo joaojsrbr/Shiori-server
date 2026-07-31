@@ -70,14 +70,14 @@ func NewExtractHandler(
 		if snap.UserAction {
 			token := cm.Create(navRes.SessionID)
 			slog.Info("user action required, waiting for challenge resolution", "token", token, "url", fmt.Sprintf("/api/v1/challenges/%s", token))
-			
+
 			// We block the worker here. In a real system we would update the job status in the DB
 			// to "requires_user_action" and include the URL, but our queue/job interface doesn't
 			// support runtime status updates yet.
 			if err := cm.Wait(ctx, token); err != nil {
 				return fmt.Errorf("challenge failed or timed out: %w", err)
 			}
-			
+
 			// Take snapshot again after challenge is solved
 			snap, err = b.Snapshot(ctx, navRes.SessionID)
 			if err != nil {
