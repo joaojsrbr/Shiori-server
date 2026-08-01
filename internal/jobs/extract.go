@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"golang.org/x/net/html"
@@ -29,11 +31,13 @@ type ExtractPayload struct {
 // stripNoisyTags performs a first-pass deep cleanup removing elements that
 // carry zero informational value for LLM-based extraction (scripts, styles,
 // ads, navigation chrome, etc).
-func stripNoisyTags(htmlStr string) string {
+func stripNoisyTags(htmlStr, baseURL string) (string, string) {
 	doc, err := html.Parse(strings.NewReader(htmlStr))
 	if err != nil {
-		return htmlStr
+		return htmlStr, ""
 	}
+	metadata := extractDocumentMetadata(doc)
+	base, _ := url.Parse(baseURL)
 
 	removeTags := map[string]bool{
 		"script": true, "style": true, "noscript": true, "svg": true, "path": true,
@@ -61,6 +65,11 @@ func stripNoisyTags(htmlStr string) string {
 					var keep []html.Attribute
 					for _, a := range c.Attr {
 						if keepAttr[strings.ToLower(a.Key)] {
+							if base != nil && (a.Key == "href" || a.Key == "src") {
+								if ref, err := url.Parse(strings.TrimSpace(a.Val)); err == nil && !ref.IsAbs() && ref.Scheme == "" {
+									a.Val = base.ResolveReference(ref).String()
+								}
+							}
 							keep = append(keep, a)
 						}
 					}
@@ -79,7 +88,78 @@ func stripNoisyTags(htmlStr string) string {
 
 	var buf strings.Builder
 	html.Render(&buf, doc)
-	return buf.String()
+	return buf.String(), metadata
+}
+
+const maxMetadataBytes = 8192
+
+// extractDocumentMetadata retains compact, high-signal data that would
+// otherwise disappear with <head>, <meta>, and <script> cleanup.
+func extractDocumentMetadata(doc *html.Node) string {
+	var entries []string
+	allowedMeta := map[string]bool{
+		"description": true, "og:title": true, "og:type": true,
+		"og:url": true, "twitter:title": true,
+	}
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			switch n.Data {
+			case "title":
+				if value := strings.TrimSpace(nodeText(n)); value != "" {
+					entries = append(entries, "title: "+value)
+				}
+			case "meta":
+				var key, value string
+				for _, attr := range n.Attr {
+					switch strings.ToLower(attr.Key) {
+					case "name", "property":
+						key = strings.ToLower(strings.TrimSpace(attr.Val))
+					case "content":
+						value = strings.TrimSpace(attr.Val)
+					}
+				}
+				if allowedMeta[key] && value != "" {
+					entries = append(entries, key+": "+value)
+				}
+			case "script":
+				for _, attr := range n.Attr {
+					if strings.EqualFold(attr.Key, "type") && strings.EqualFold(strings.TrimSpace(attr.Val), "application/ld+json") {
+						if value := strings.TrimSpace(nodeText(n)); value != "" {
+							entries = append(entries, "json-ld: "+value)
+						}
+					}
+				}
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(doc)
+	result := strings.Join(entries, "\n")
+	if len(result) > maxMetadataBytes {
+		result = result[:maxMetadataBytes]
+		for len(result) > 0 && !utf8.ValidString(result) {
+			result = result[:len(result)-1]
+		}
+	}
+	return result
+}
+
+func nodeText(n *html.Node) string {
+	var result strings.Builder
+	var walk func(*html.Node)
+	walk = func(current *html.Node) {
+		if current.Type == html.TextNode {
+			result.WriteString(current.Data)
+		}
+		for child := current.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(n)
+	return strings.Join(strings.Fields(result.String()), " ")
 }
 
 // htmlToMarkdown converts cleaned HTML to Markdown.
@@ -91,8 +171,8 @@ func stripNoisyTags(htmlStr string) string {
 // 2. Convert the remaining semantic HTML to clean Markdown
 // This consistently achieves 65-90% token reduction vs raw HTML while
 // preserving every piece of scrapeable content (titles, links, chapter lists, etc).
-func distillHTML(htmlStr string) string {
-	stripped := stripNoisyTags(htmlStr)
+func distillHTML(htmlStr, baseURL string) string {
+	stripped, metadata := stripNoisyTags(htmlStr, baseURL)
 	md, err := htmltomarkdown.ConvertString(stripped)
 	if err != nil {
 		// If conversion fails, fall back to the stripped HTML with collapsed whitespace
@@ -113,7 +193,11 @@ func distillHTML(htmlStr string) string {
 			result = append(result, line)
 		}
 	}
-	return strings.Join(result, "\n")
+	body := strings.Join(result, "\n")
+	if metadata != "" {
+		return "# Document metadata\n\n" + metadata + "\n\n# Document content\n\n" + body
+	}
+	return body
 }
 
 // ExtractResponse is the response format for extraction progress and completion.
@@ -225,7 +309,11 @@ func NewExtractHandler(
 
 			// 3. Sanitize HTML
 			sendEvent("progress", map[string]string{"step": "distilling", "message": "Cleaning HTML..."})
-			cleanHTML := distillHTML(snap.HTML)
+			baseURL := snap.FinalURL
+			if baseURL == "" {
+				baseURL = currentURL
+			}
+			cleanHTML := distillHTML(snap.HTML, baseURL)
 			slog.Debug("html distilled to markdown", "original_bytes", len(snap.HTML), "distilled_bytes", len(cleanHTML))
 
 			// 4. Extract structured data via AI

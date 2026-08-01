@@ -35,3 +35,17 @@ substituíveis.
 - Comportamento observável dos repositórios deve ser equivalente entre perfis.
 - NuExtract é acessado por adapter LM Studio e saída validada por schema.
 
+## Pipeline de contexto da IA
+
+```text
+DOM renderizado
+  -> metadados de alto sinal + limpeza estrutural
+  -> URLs absolutas + Markdown
+  -> blocos semânticos por título
+  -> orçamento contexto/template/saída
+  -> NuExtract3 por chunk
+  -> merge e deduplicação determinísticos
+```
+
+O contexto padrão é `8192` tokens, a saída reserva no máximo `2048`, e cada
+chunk tem teto adicional de `12000` bytes. Ambos os limites são configuráveis.

@@ -13,8 +13,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.Profile != config.ProfilePortable {
 		t.Errorf("default profile = %q, want %q", cfg.Profile, config.ProfilePortable)
 	}
-	if cfg.Server.Port != 9180 {
-		t.Errorf("default port = %d, want 9180", cfg.Server.Port)
+	if cfg.Server.Port != 8080 {
+		t.Errorf("default port = %d, want 8080", cfg.Server.Port)
 	}
 	if cfg.Log.Level != "info" {
 		t.Errorf("default log level = %q, want %q", cfg.Log.Level, "info")
@@ -138,7 +138,7 @@ func TestDataDirFromFlag(t *testing.T) {
 
 func TestServerAddr(t *testing.T) {
 	cfg := config.Defaults()
-	want := "127.0.0.1:9180"
+	want := "127.0.0.1:8080"
 	if got := cfg.Server.Addr(); got != want {
 		t.Errorf("Addr() = %q, want %q", got, want)
 	}

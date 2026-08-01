@@ -43,7 +43,7 @@ func TestProvider_Extract_Success(t *testing.T) {
 	}
 
 	tmplPath := createTestTemplates(t)
-	provider, err := nuextract.New(mockClient, "nuextract-tiny", tmplPath, 0)
+	provider, err := nuextract.New(mockClient, "nuextract-tiny", tmplPath, 8192, 0)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -73,7 +73,7 @@ func TestProvider_Extract_Success(t *testing.T) {
 		t.Errorf("expected nuextract-tiny, got %s", res.Method)
 	}
 
-	// Check if prompt was built correctly
+	// LM Studio receives the NuExtract inputs serialized in the GGUF prompt.
 	if mockClient.LastReq == nil {
 		t.Fatal("last req should not be nil")
 	}
@@ -83,7 +83,10 @@ func TestProvider_Extract_Success(t *testing.T) {
 		t.Errorf("prompt missing correct input: %s", prompt)
 	}
 	if !strings.Contains(prompt, "<|template|>\n{") {
-		t.Errorf("prompt missing correct template schema")
+		t.Errorf("prompt missing NuExtract template")
+	}
+	if mockClient.LastReq.MaxTokens >= 8192 {
+		t.Errorf("max output tokens %d must leave room for input", mockClient.LastReq.MaxTokens)
 	}
 }
 
@@ -93,7 +96,7 @@ func TestProvider_Extract_ClientError(t *testing.T) {
 	}
 
 	tmplPath := createTestTemplates(t)
-	provider, _ := nuextract.New(mockClient, "nuextract-tiny", tmplPath, 0)
+	provider, _ := nuextract.New(mockClient, "nuextract-tiny", tmplPath, 8192, 0)
 
 	_, err := provider.Extract(context.Background(), extraction.Request{Target: extraction.TargetManga})
 	if err == nil {
@@ -111,7 +114,7 @@ func TestProvider_Extract_InvalidJSON(t *testing.T) {
 	}
 
 	tmplPath := createTestTemplates(t)
-	provider, _ := nuextract.New(mockClient, "nuextract-tiny", tmplPath, 0)
+	provider, _ := nuextract.New(mockClient, "nuextract-tiny", tmplPath, 8192, 0)
 
 	_, err := provider.Extract(context.Background(), extraction.Request{Target: extraction.TargetManga})
 	if err == nil {

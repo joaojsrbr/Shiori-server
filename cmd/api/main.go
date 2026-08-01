@@ -50,7 +50,7 @@ import (
 func main() {
 	if len(os.Args) == 1 {
 		// Default arguments if run directly without CLI flags
-		os.Args = append(os.Args, "serve", "--profile", "portable", "--data-dir", "./data", "--port", "8080", "--log-level", "debug")
+		os.Args = append(os.Args, "serve", "--profile", "portable", "--log-level", "info")
 	}
 
 	if len(os.Args) < 2 {
@@ -228,12 +228,12 @@ func runServe(args []string) error {
 	// Only registered when log level is "debug".
 	if cfg.Log.Level == "debug" && browserProvider != nil {
 		lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
-		debugExtProvider, err := nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath, cfg.AI.MaxContentBytes)
+		debugExtProvider, err := nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath, cfg.AI.MaxContextLength, cfg.AI.MaxContentBytes)
 		if err != nil {
 			logger.Error("failed to init debug ai provider", "err", err)
 		} else {
-			srv.Router().Route("/api/v1/debug", func(r chi.Router) {
-				r.Post("/extract", jobs.HandleDebugExtract(browserProvider, debugExtProvider, mediaRepo, challengeManager))
+			srv.Router().Route("/api/v1", func(r chi.Router) {
+				jobs.RegisterDebugExtractRoute(r, cfg.Log.Level == "debug", browserProvider, debugExtProvider, mediaRepo, challengeManager)
 			})
 			logger.Warn("debug endpoints enabled", "path", "/api/v1/debug/extract")
 		}
@@ -250,7 +250,7 @@ func runServe(args []string) error {
 	var extProvider extraction.Provider
 	if cfg.AI.LMStudioBaseURL != "" {
 		lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
-		extProvider, err = nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath, cfg.AI.MaxContentBytes)
+		extProvider, err = nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath, cfg.AI.MaxContextLength, cfg.AI.MaxContentBytes)
 		if err != nil {
 			logger.Error("failed to init ai provider", "err", err)
 			extProvider = nil

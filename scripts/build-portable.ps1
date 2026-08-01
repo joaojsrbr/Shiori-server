@@ -15,9 +15,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BackDir = Split-Path -Parent $ScriptDir
 Set-Location -Path $BackDir
 
-Write-Host "Checking environment and format..." -ForegroundColor Cyan
-go mod tidy
-gofmt -w .
+Write-Host "Running static checks and tests..." -ForegroundColor Cyan
 go vet ./...
 go test ./...
 
@@ -52,19 +50,22 @@ if (!(Test-Path "dist")) {
     New-Item -ItemType Directory -Path "dist" | Out-Null
 }
 
-Write-Host "Building shiori-server-debug.exe..." -ForegroundColor Cyan
+# Remove artifacts produced by the former dual-build workflow.
+foreach ($LegacyArtifact in @("dist\shiori-server-debug.exe", "dist\shiori-server-release.exe")) {
+    if (Test-Path -LiteralPath $LegacyArtifact) {
+        Remove-Item -LiteralPath $LegacyArtifact -Force
+    }
+}
+
+Write-Host "Building dist\shiori-server.exe (Windows console application)..." -ForegroundColor Cyan
 
 $env:CGO_ENABLED = "0"
 $env:GOOS = "windows"
 $env:GOARCH = "amd64"
 
-# Debug build (no optimization flags, keep terminal)
-go build -trimpath -buildvcs=false -ldflags="$LdFlags" -o dist\shiori-server-debug.exe .\cmd\api
-
-Write-Host "Building shiori-server-release.exe..." -ForegroundColor Cyan
-
-# Release build (strips debug symbols for smaller size, keeps terminal)
+# The default Go Windows target is the console subsystem. Do not pass
+# '-H windowsgui': double-clicking the executable must keep its CMD visible.
 $LdFlagsRelease = "$LdFlags -s -w"
-go build -trimpath -buildvcs=false -ldflags="$LdFlagsRelease" -o dist\shiori-server-release.exe .\cmd\api
+go build -trimpath -buildvcs=false -ldflags="$LdFlagsRelease" -o dist\shiori-server.exe .\cmd\api
 
-Write-Host "Build finished successfully: dist\shiori-server-debug.exe and dist\shiori-server-release.exe" -ForegroundColor Green
+Write-Host "Build finished successfully: dist\shiori-server.exe" -ForegroundColor Green

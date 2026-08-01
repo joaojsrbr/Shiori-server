@@ -16,6 +16,16 @@ Adicione uma entrada por branch mesclada, da mais recente para a mais antiga.
 - Próximo passo:
 ```
 
+## 2026-08-01 — feature/semantic-context-pipeline
+
+- Objetivo: reduzir o contexto enviado ao NuExtract3 sem cortar estruturas úteis e simplificar o executável portátil.
+- Resultado: metadados/JSON-LD preservados, URLs normalizadas, Markdown segmentado por blocos e títulos, orçamento baseado na janela real, prompt GGUF compatível com LM Studio, endpoint debug unificado em `http.go` e build Windows reduzido a um `.exe` de console.
+- Arquivos principais: `internal/jobs/extract.go`, `internal/jobs/http.go`, `internal/extraction/nuextract/chunker.go`, `internal/extraction/nuextract/provider.go`, `scripts/build-portable.ps1`.
+- Contrato/migrations: porta padrão e Docker alinhados em `8080`; nenhuma migration; endpoint debug continua fora do contrato público e só existe em log-level debug.
+- Verificações: testes unitários do orçamento, UTF-8, breadcrumb, deduplicação, metadados, URLs e gate da rota; suíte Go completa; build e smoke portátil.
+- Decisões/ADRs: ADR 0009.
+- Próximo passo: medir extrações reais com Q4/Q5 e calibrar os limites por modelo se necessário.
+
 ## 2026-08-01 — feature/human-challenge-handoff
 
 - Objetivo: transformar o protótipo de challenge em um handoff humano seguro, temporário e verificável.

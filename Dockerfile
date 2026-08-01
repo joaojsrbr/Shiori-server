@@ -32,10 +32,10 @@ COPY --from=builder /app/shiori-server /app/shiori-server
 RUN addgroup -S shiori && adduser -S shiori -G shiori
 USER shiori
 
-EXPOSE 9180
+EXPOSE 8080
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -qO- http://127.0.0.1:9180/health/ready || exit 1
+    CMD wget -qO- http://127.0.0.1:8080/health/ready || exit 1
 
 ENTRYPOINT ["/app/shiori-server"]
 CMD ["serve", "--profile", "docker", "--log-format", "json"]

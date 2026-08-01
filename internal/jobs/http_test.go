@@ -9,12 +9,42 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/joaojsr/shiori-server/internal/jobs"
+	"github.com/joaojsr/shiori-server/internal/platform/browser"
 	"github.com/joaojsr/shiori-server/internal/platform/queue"
 )
 
 // mockQueueProvider provides a dummy implementation of queue.Provider
 type mockQueueProvider struct {
 	Enqueued bool
+}
+
+func TestDebugExtractRouteRegistration(t *testing.T) {
+	browserProvider := &mockBrowserProvider{}
+	extractor := &mockExtractionProvider{}
+	repo := &mockMediaRepoExtract{}
+	manager := browser.NewChallengeManager()
+
+	tests := []struct {
+		name     string
+		enabled  bool
+		wantCode int
+	}{
+		{name: "disabled outside debug", enabled: false, wantCode: http.StatusNotFound},
+		{name: "registered in debug", enabled: true, wantCode: http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := chi.NewRouter()
+			jobs.RegisterDebugExtractRoute(router, tt.enabled, browserProvider, extractor, repo, manager)
+			request := httptest.NewRequest(http.MethodPost, "/debug/extract", bytes.NewBufferString(`{"target":"manga"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d", response.Code, tt.wantCode)
+			}
+		})
+	}
 }
 
 func (m *mockQueueProvider) Enqueue(ctx context.Context, job *queue.Job) error {

@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/joaojsr/shiori-server/internal/extraction"
 	"github.com/joaojsr/shiori-server/internal/library"
+	"github.com/joaojsr/shiori-server/internal/platform/browser"
 	"github.com/joaojsr/shiori-server/internal/platform/events"
 	"github.com/joaojsr/shiori-server/internal/platform/httpserver"
 	"github.com/joaojsr/shiori-server/internal/platform/queue"
@@ -18,6 +20,116 @@ import (
 type Handler struct {
 	q   queue.Provider
 	hub *events.Hub
+}
+
+// RegisterDebugExtractRoute attaches the synchronous extraction endpoint only
+// when debug mode is explicitly enabled. Keeping the gate beside the route
+// prevents accidental exposure from a caller that reuses the handler.
+func RegisterDebugExtractRoute(
+	r chi.Router,
+	enabled bool,
+	b browser.Provider,
+	ext extraction.Provider,
+	repo library.MediaRepository,
+	cm *browser.ChallengeManager,
+) {
+	if !enabled || b == nil || ext == nil {
+		return
+	}
+	r.Post("/debug/extract", HandleDebugExtract(b, ext, repo, cm))
+}
+
+// HandleDebugExtract runs the same worker pipeline synchronously and relays its
+// progress as SSE. The extraction implementation remains single-sourced in
+// NewExtractHandler instead of drifting into a second debug-only copy.
+func HandleDebugExtract(
+	b browser.Provider,
+	ext extraction.Provider,
+	repo library.MediaRepository,
+	cm *browser.ChallengeManager,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var payload ExtractPayload
+		if err := httpserver.DecodeJSON(r, &payload); err != nil {
+			httpserver.RespondError(w, httpserver.Problem{Status: http.StatusBadRequest, Title: "Invalid Payload", Detail: err.Error()})
+			return
+		}
+		if payload.URL == "" || payload.Target == "" {
+			httpserver.RespondError(w, httpserver.Problem{Status: http.StatusBadRequest, Title: "Invalid Request", Detail: "URL and Target are required"})
+			return
+		}
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			httpserver.RespondError(w, httpserver.Problem{Status: http.StatusInternalServerError, Title: "SSE Not Supported", Detail: "Streaming unsupported by client"})
+			return
+		}
+
+		rawPayload, _ := json.Marshal(payload)
+		jobID := library.NewULID()
+		job := &queue.Job{ID: jobID, Type: "extract_media", Payload: rawPayload}
+		hub := events.NewHub()
+		topic := "job:" + jobID
+		stream := hub.Subscribe(topic)
+		defer hub.Unsubscribe(topic, stream)
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		done := make(chan error, 1)
+		go func() {
+			done <- NewExtractHandler(b, ext, repo, cm, hub)(r.Context(), job)
+		}()
+
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		forward := func(eventData any) bool {
+			message, ok := eventData.(map[string]any)
+			if !ok {
+				return false
+			}
+			event, _ := message["event"].(string)
+			data, _ := json.Marshal(message["data"])
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
+			flusher.Flush()
+			return event == "done" || event == "error"
+		}
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				fmt.Fprint(w, ": heartbeat\n\n")
+				flusher.Flush()
+			case err := <-done:
+				// The worker publishes its terminal event before returning. Drain
+				// queued events first so select scheduling cannot hide that detail.
+				for draining := true; draining; {
+					select {
+					case eventData := <-stream:
+						if forward(eventData) {
+							return
+						}
+					default:
+						draining = false
+					}
+				}
+				if err != nil {
+					// NewExtractHandler normally emits the detailed error first; this
+					// fallback covers failures before event publication.
+					data, _ := json.Marshal(map[string]string{"title": "Extraction Error", "detail": err.Error()})
+					fmt.Fprintf(w, "event: error\ndata: %s\n\n", data)
+					flusher.Flush()
+				}
+				return
+			case eventData := <-stream:
+				if forward(eventData) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // NewHandler creates a new HTTP handler for jobs.

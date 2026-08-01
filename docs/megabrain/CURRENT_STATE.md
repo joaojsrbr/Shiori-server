@@ -1,6 +1,6 @@
 # Estado atual
 
-Atualizado em: 2026-07-30
+Atualizado em: 2026-08-01
 
 ## Repositório
 
@@ -32,9 +32,14 @@ Atualizado em: 2026-07-30
   TTL, controlador único, validação de origem e de input, cancelamento e
   verificação do DOM pelo backend antes da retomada (ADR 0008).
 - ADRs iniciais estão em `docs/adr/`.
+- A entrada do NuExtract3 usa metadados + Markdown, orçamento conservador da
+  janela e chunks semânticos com limite rígido (ADR 0009).
+- `/api/v1/debug/extract` reutiliza o mesmo pipeline do worker e só é registrado
+  quando `--log-level debug` está ativo.
 
 ## Artefatos locais
 
-- `dist/shiori-server-debug.exe` e `dist/shiori-server-release.exe` gerados e ignorados.
+- `dist/shiori-server.exe` é o único artefato Windows, usa o subsistema console
+  e permanece ignorado.
 - Dados portáteis, SQLite, storage, backups e logs não podem entrar no Git.
 
