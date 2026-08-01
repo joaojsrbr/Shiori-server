@@ -197,9 +197,25 @@ paths:
                 target:
                   type: string
                   enum: [media, chapter_list]
+                requires_login:
+                  type: boolean
+                  default: false
+                  description: Explicitly asks for a human login before extraction. The backend never receives credentials.
+                login_url:
+                  type: string
+                  format: uri
+                  description: Login page opened in the same isolated persistent browser profile as the source URL. Required when requires_login is true.
               required:
                 - url
                 - target
+              allOf:
+                - if:
+                    properties:
+                      requires_login:
+                        const: true
+                    required: [requires_login]
+                  then:
+                    required: [login_url]
       responses:
         '202':
           description: Job enqueued successfully

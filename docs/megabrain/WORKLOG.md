@@ -16,6 +16,16 @@ Adicione uma entrada por branch mesclada, da mais recente para a mais antiga.
 - Próximo passo:
 ```
 
+## 2026-08-01 — feature/intelligent-login-flow
+
+- Objetivo: combinar detecção genérica de login com uma instrução explícita fornecida pelo frontend.
+- Resultado: extração aceita `requires_login` + `login_url`, valida URLs HTTP(S), abre autenticação no perfil persistente da fonte, preserva sessão entre hosts de autenticação e reabre a URL original; heurísticas reconhecem inputs, formulários, botões, rotas e termos multilíngues.
+- Arquivos principais: `internal/jobs/extract.go`, `internal/platform/browser/chromedp/provider.go`, `api/openapi/shiori.yaml`.
+- Contrato/migrations: dois campos opcionais no pedido de `POST /api/v1/jobs/extract`; sem migration.
+- Verificações: testes de validação HTTP, fluxo de login explícito, escopo do perfil, retomada da fonte e classificação genérica; suíte Go completa.
+- Decisões/ADRs: ADR 0008 atualizado; credenciais e cookies continuam exclusivamente sob controle do Chromium.
+- Próximo passo: o frontend deve oferecer controle de login opcional e enviar ambos os campos de forma atômica.
+
 ## 2026-08-01 — fix/fullscreen-challenge-handoff
 
 - Objetivo: permitir interação precisa com desafios reais usando toda a área disponível da página de handoff.

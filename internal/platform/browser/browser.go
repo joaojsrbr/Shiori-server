@@ -8,6 +8,7 @@ import (
 // NavigateRequest holds the parameters for a navigation action.
 type NavigateRequest struct {
 	URL           string
+	ProfileURL    string // Optional URL whose hostname owns the isolated persistent profile.
 	WaitFor       string // CSS selector to wait for (optional)
 	Timeout       int    // Timeout in milliseconds (0 means default)
 	AutoScroll    bool   // If true, attempts to scroll to bottom repeatedly until network is idle

@@ -154,11 +154,11 @@ func (h *Handler) EnqueueExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if payload.URL == "" || payload.Target == "" {
+	if err := payload.Validate(); err != nil {
 		httpserver.RespondError(w, httpserver.Problem{
 			Status: http.StatusBadRequest,
 			Title:  "Invalid Request",
-			Detail: "url and target are required",
+			Detail: err.Error(),
 		})
 		return
 	}

@@ -75,7 +75,11 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
 		targetURL = "https://" + targetURL
 	}
-	profileKey, err := domainProfileKey(targetURL)
+	profileURL := req.ProfileURL
+	if profileURL == "" {
+		profileURL = targetURL
+	}
+	profileKey, err := domainProfileKey(profileURL)
 	if err != nil {
 		return nil, fmt.Errorf("chromedp: invalid target URL: %w", err)
 	}
@@ -336,17 +340,29 @@ func captureRenderedPage(ctx context.Context) (renderedPage, error) {
 				"iframe[src*='challenges.cloudflare.com']",
 				"form[action*='/cdn-cgi/challenge-platform/']"
 			];
-			const visiblePassword = Array.from(document.querySelectorAll("input[type='password']")).some(isVisible);
+			const loginWords = /sign\s*in|log\s*in|login|entrar|acessar|iniciar\s+sesi[oó]n|connexion|anmelden|ログイン|登录|登入|로그인/i;
+			const visiblePassword = Array.from(document.querySelectorAll("input[type='password']"))
+				.some((element) => isVisible(element) && element.autocomplete !== "new-password");
 			const visibleIdentity = Array.from(document.querySelectorAll(
-				"input[type='email'], input[autocomplete='username'], input[name*='email' i], input[name*='user' i]"
+				"input[type='email'], input[autocomplete='username'], input[name*='email' i], input[name*='user' i], input[name*='login' i]"
 			)).some(isVisible);
+			const visibleLoginForm = Array.from(document.querySelectorAll("form")).some((form) => {
+				if (!isVisible(form)) return false;
+				const action = form.getAttribute("action") || "";
+				const submitCopy = Array.from(form.querySelectorAll("button, input[type='submit']"))
+					.filter(isVisible)
+					.map((element) => element.innerText || element.value || element.getAttribute("aria-label") || "")
+					.join(" ");
+				return loginWords.test(action) || loginWords.test(submitCopy);
+			});
+			const bodyCopy = document.body && document.body.innerText || "";
 			return {
 				title: document.title || "",
-				bodyText: (document.body && document.body.innerText || "").slice(0, 8192),
+				bodyText: bodyCopy.slice(0, 8192),
 				hasVisibleChallenge: selectors.some((selector) =>
 					Array.from(document.querySelectorAll(selector)).some(isVisible)
 				),
-				hasVisibleLogin: visiblePassword || (visibleIdentity && /sign in|log in|entrar|acessar/i.test(document.body && document.body.innerText || ""))
+				hasVisibleLogin: visiblePassword || visibleLoginForm || (visibleIdentity && loginWords.test(bodyCopy))
 			};
 		})()`, &page),
 	)
@@ -445,9 +461,13 @@ func redirectedToLogin(requestedURL, finalURL string) bool {
 	segments := strings.Split(path, "/")
 	for _, segment := range segments {
 		switch segment {
-		case "login", "signin", "sign-in", "sign_in":
+		case "login", "signin", "sign-in", "sign_in", "authenticate", "authentication":
 			return true
 		}
+	}
+	// Common framework routes use /sessions/new for a login form.
+	if strings.HasSuffix(path, "sessions/new") || strings.HasSuffix(path, "session/new") {
+		return true
 	}
 	return false
 }

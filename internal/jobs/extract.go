@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -24,8 +25,58 @@ import (
 type ExtractPayload struct {
 	URL           string                `json:"url"`
 	Target        extraction.TargetType `json:"target"`
+	RequiresLogin bool                  `json:"requires_login,omitempty"`
+	LoginURL      string                `json:"login_url,omitempty"`
 	AutoScroll    bool                  `json:"auto_scroll,omitempty"`
 	ClickSelector string                `json:"click_selector,omitempty"`
+}
+
+// Validate rejects incomplete and inconsistent extraction instructions before
+// they enter the durable queue. Credentials remain inside Chromium.
+func (p ExtractPayload) Validate() error {
+	if err := validateHTTPURL(p.URL); err != nil {
+		return fmt.Errorf("invalid url: %w", err)
+	}
+	if p.Target == "" {
+		return errors.New("target is required")
+	}
+	if p.RequiresLogin {
+		if err := validateHTTPURL(p.LoginURL); err != nil {
+			return fmt.Errorf("requires_login needs a valid login_url: %w", err)
+		}
+	} else if strings.TrimSpace(p.LoginURL) != "" {
+		return errors.New("login_url requires requires_login=true")
+	}
+	return nil
+}
+
+func validateHTTPURL(raw string) error {
+	parsed, err := url.ParseRequestURI(strings.TrimSpace(raw))
+	if err != nil {
+		return err
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		return errors.New("must be an absolute http or https URL")
+	}
+	return nil
+}
+
+func sameLoginLocation(loginURL, finalURL string) bool {
+	expected, expectedErr := url.Parse(strings.TrimSpace(loginURL))
+	actual, actualErr := url.Parse(strings.TrimSpace(finalURL))
+	if expectedErr != nil || actualErr != nil || actual.Hostname() == "" {
+		return false
+	}
+	normalizePath := func(value string) string {
+		value = strings.TrimSuffix(value, "/")
+		if value == "" {
+			return "/"
+		}
+		return value
+	}
+	return strings.EqualFold(expected.Scheme, actual.Scheme) &&
+		strings.EqualFold(expected.Host, actual.Host) &&
+		normalizePath(expected.Path) == normalizePath(actual.Path)
 }
 
 // stripNoisyTags performs a first-pass deep cleanup removing elements that
@@ -240,12 +291,18 @@ func NewExtractHandler(
 			return sendError("Invalid Payload", "Failed to parse job payload", err)
 		}
 
-		if payload.URL == "" || payload.Target == "" {
-			return sendError("Invalid Request", "URL and Target are required", fmt.Errorf("missing parameters"))
+		if err := payload.Validate(); err != nil {
+			return sendError("Invalid Request", err.Error(), err)
 		}
 
 		var finalResultJSON map[string]interface{}
 		currentURL := payload.URL
+		loginPhase := false
+		loginConfirmed := false
+		if payload.RequiresLogin {
+			currentURL = payload.LoginURL
+			loginPhase = true
+		}
 		pageCount := 1
 		visitedURLs := make(map[string]bool)
 		visitedURLs[currentURL] = true
@@ -257,6 +314,7 @@ func NewExtractHandler(
 			sendEvent("progress", map[string]string{"step": "navigating", "message": fmt.Sprintf("Loading page %d in browser...", pageCount)})
 			navReq := browser.NavigateRequest{
 				URL:           currentURL,
+				ProfileURL:    payload.URL,
 				AutoScroll:    payload.AutoScroll,
 				ClickSelector: payload.ClickSelector,
 			}
@@ -271,6 +329,14 @@ func NewExtractHandler(
 			if err != nil {
 				b.CloseSession(context.Background(), navRes.SessionID)
 				return sendError("Browser Error", "Failed to get snapshot: "+err.Error(), err)
+			}
+
+			// An explicit login URL covers custom authentication pages that do
+			// not expose conventional input names or copy. Redirecting away from
+			// it without a visible login means the saved session is already valid.
+			if loginPhase && !loginConfirmed && !snap.UserAction && sameLoginLocation(payload.LoginURL, snap.FinalURL) {
+				snap.UserAction = true
+				snap.UserActionKind = browser.UserActionLogin
 			}
 
 			if snap.UserAction {
@@ -307,6 +373,9 @@ func NewExtractHandler(
 					b.CloseSession(context.Background(), navRes.SessionID)
 					return sendError("Challenge Failed", "Challenge resolution failed or timed out", waitErr)
 				}
+				if actionKind == browser.UserActionLogin {
+					loginConfirmed = true
+				}
 
 				// Close gracefully so Chromium persists cookies, then reopen the
 				// exact requested URL with the same domain profile. This prevents
@@ -332,6 +401,13 @@ func NewExtractHandler(
 
 			// Close session after snapshot
 			b.CloseSession(context.Background(), navRes.SessionID)
+			if loginPhase {
+				loginPhase = false
+				currentURL = payload.URL
+				visitedURLs[currentURL] = true
+				sendEvent("progress", map[string]string{"step": "authenticated", "message": "Login session saved. Opening the requested page..."})
+				continue
+			}
 
 			// 3. Sanitize HTML
 			sendEvent("progress", map[string]string{"step": "distilling", "message": "Cleaning HTML..."})
