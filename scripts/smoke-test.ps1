@@ -73,6 +73,30 @@ try {
     } else {
         Write-Host "Verified shiori.db creation: $DbPath" -ForegroundColor Green
     }
+
+    Write-Host "Restarting in debug mode to verify optional route mounting..." -ForegroundColor Cyan
+    Stop-Process -Id $ServerProcess.Id -Force -ErrorAction SilentlyContinue
+    Wait-Process -Id $ServerProcess.Id -ErrorAction SilentlyContinue
+
+    $DebugProcess = Start-Process -FilePath $TestExe -ArgumentList "serve --profile portable --port 18080 --log-level debug --log-format text" -WorkingDirectory $TempDir -PassThru -WindowStyle Hidden
+    Start-Sleep -Seconds 3
+    try {
+        if ($DebugProcess.HasExited) {
+            Write-Error "Server process exited prematurely in debug mode."
+        }
+
+        $DebugStatus = 0
+        try {
+            Invoke-WebRequest -Uri "http://127.0.0.1:18080/api/v1/debug/extract" -Method Post -ContentType "application/json" -Body '{}' -ErrorAction Stop | Out-Null
+        } catch {
+            $DebugStatus = $_.Exception.Response.StatusCode.value__
+        }
+        if ($DebugStatus -ne 400) {
+            Write-Error "Debug endpoint should be registered and return 400 for an invalid payload; got $DebugStatus."
+        }
+    } finally {
+        Stop-Process -Id $DebugProcess.Id -Force -ErrorAction SilentlyContinue
+    }
     
     Write-Host "Smoke test PASSED." -ForegroundColor Green
 } finally {

@@ -214,7 +214,21 @@ func runServe(args []string) error {
 	eventHub := events.NewHub()
 	jobsHandler := jobs.NewHandler(queueProvider, eventHub)
 
-	srv.Router().Route("/api/v1", func(r chi.Router) {
+	var registerDebugRoutes func(chi.Router)
+	if cfg.Log.Level == "debug" && browserProvider != nil {
+		lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
+		debugExtProvider, debugErr := nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath, cfg.AI.MaxContextLength, cfg.AI.MaxContentBytes)
+		if debugErr != nil {
+			logger.Error("failed to init debug ai provider", "err", debugErr)
+		} else {
+			registerDebugRoutes = func(r chi.Router) {
+				jobs.RegisterDebugExtractRoute(r, true, browserProvider, debugExtProvider, mediaRepo, challengeManager)
+			}
+			logger.Warn("debug endpoints enabled", "path", "/api/v1/debug/extract")
+		}
+	}
+
+	registerAPIV1Routes(srv.Router(), func(r chi.Router) {
 		r.Get("/openapi.yaml", openapi.Handler())
 		r.Get("/capabilities", handleCapabilities(cfg, dbProvider, queueProvider, storageProvider, browserProvider))
 
@@ -222,22 +236,7 @@ func runServe(args []string) error {
 		aiHandler.RegisterRoutes(r)
 		jobsHandler.RegisterRoutes(r)
 		challengeHandler.RegisterRoutes(r)
-	})
-
-	// Debug-only endpoints: run extraction synchronously and return AI output.
-	// Only registered when log level is "debug".
-	if cfg.Log.Level == "debug" && browserProvider != nil {
-		lmClient := lmstudio.NewClient(cfg.AI.LMStudioBaseURL, cfg.AI.Token)
-		debugExtProvider, err := nuextract.New(lmClient, cfg.AI.ModelDefault, cfg.AI.TemplatePath, cfg.AI.MaxContextLength, cfg.AI.MaxContentBytes)
-		if err != nil {
-			logger.Error("failed to init debug ai provider", "err", err)
-		} else {
-			srv.Router().Route("/api/v1", func(r chi.Router) {
-				jobs.RegisterDebugExtractRoute(r, cfg.Log.Level == "debug", browserProvider, debugExtProvider, mediaRepo, challengeManager)
-			})
-			logger.Warn("debug endpoints enabled", "path", "/api/v1/debug/extract")
-		}
-	}
+	}, registerDebugRoutes)
 
 	// Mark ready after initialization is complete.
 	// In the future, migrations and other init steps happen before this.
@@ -295,6 +294,18 @@ func runServe(args []string) error {
 
 	logger.Info("server stopped gracefully")
 	return nil
+}
+
+// registerAPIV1Routes mounts the versioned API exactly once. Chi panics when a
+// second handler is mounted at the same path, so optional routes must be added
+// through the same subrouter.
+func registerAPIV1Routes(router chi.Router, coreRoutes, optionalRoutes func(chi.Router)) {
+	router.Route("/api/v1", func(r chi.Router) {
+		coreRoutes(r)
+		if optionalRoutes != nil {
+			optionalRoutes(r)
+		}
+	})
 }
 
 // handleCapabilities returns the current server capabilities.
