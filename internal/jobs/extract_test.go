@@ -28,12 +28,81 @@ type handoffBrowser struct {
 	navigations int
 	closes      int
 	snapshots   []*browser.PageSnapshot
+	requests    []browser.NavigateRequest
 }
 
 func (b *handoffBrowser) IsAvailable() bool { return true }
-func (b *handoffBrowser) Navigate(context.Context, browser.NavigateRequest) (*browser.NavigateResult, error) {
+func (b *handoffBrowser) Navigate(_ context.Context, request browser.NavigateRequest) (*browser.NavigateResult, error) {
 	b.navigations++
+	b.requests = append(b.requests, request)
 	return &browser.NavigateResult{SessionID: fmt.Sprintf("session-%d", b.navigations)}, nil
+}
+
+func TestExtractHandlerUsesExplicitLoginURLInSourceProfile(t *testing.T) {
+	b := &handoffBrowser{snapshots: []*browser.PageSnapshot{
+		{HTML: "<main>Custom auth portal</main>", FinalURL: "https://auth.example.test/start"},
+		{HTML: "<main>Account</main>", FinalURL: "https://auth.example.test/account"},
+		{HTML: "<main>Requested work</main>", FinalURL: "https://reader.example.test/work/1"},
+	}}
+	extractor := &mockExtractionProvider{JSONReturn: json.RawMessage(`{"title":"Authenticated Work"}`)}
+	repo := &mockMediaRepoExtract{}
+	manager := browser.NewChallengeManager()
+	hub := events.NewHub()
+	job := &queue.Job{ID: "explicit-login-job"}
+	payload := jobs.ExtractPayload{
+		URL:           "https://reader.example.test/work/1",
+		Target:        extraction.TargetManga,
+		RequiresLogin: true,
+		LoginURL:      "https://auth.example.test/start",
+	}
+	job.Payload, _ = json.Marshal(payload)
+
+	stream := hub.Subscribe("job:" + job.ID)
+	defer hub.Unsubscribe("job:"+job.ID, stream)
+	done := make(chan error, 1)
+	go func() {
+		done <- jobs.NewExtractHandler(b, extractor, repo, manager, hub)(context.Background(), job)
+	}()
+
+	for {
+		select {
+		case raw := <-stream:
+			event, _ := raw.(map[string]any)
+			if event["event"] != "challenge" {
+				continue
+			}
+			data, _ := event["data"].(map[string]string)
+			if data["kind"] != string(browser.UserActionLogin) {
+				t.Fatalf("challenge kind = %q, want login", data["kind"])
+			}
+			token := strings.TrimPrefix(data["challenge_url"], "/api/v1/challenges/")
+			if _, err := manager.BeginVerification(token); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := manager.Resolve(token); err != nil {
+				t.Fatal(err)
+			}
+			goto wait
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for explicit login handoff")
+		}
+	}
+
+wait:
+	if err := <-done; err != nil {
+		t.Fatalf("handler error = %v", err)
+	}
+	if len(b.requests) != 3 {
+		t.Fatalf("navigation count = %d, want login + login resume + source", len(b.requests))
+	}
+	for i, request := range b.requests {
+		if request.ProfileURL != payload.URL {
+			t.Fatalf("request %d profile URL = %q, want %q", i, request.ProfileURL, payload.URL)
+		}
+	}
+	if b.requests[0].URL != payload.LoginURL || b.requests[2].URL != payload.URL {
+		t.Fatalf("navigation sequence = %#v", b.requests)
+	}
 }
 func (b *handoffBrowser) Snapshot(context.Context, string) (*browser.PageSnapshot, error) {
 	if len(b.snapshots) == 0 {

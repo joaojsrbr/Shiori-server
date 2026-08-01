@@ -27,6 +27,10 @@ temporária e descartável em `/api/v1/challenges/{token}`. Essa página:
 - classifica `challenge` e `login` por DOM visível e redirecionamento; após a
   confirmação, reabre a URL originalmente solicitada no mesmo perfil e recusa
   a retomada se ela voltar ao login;
+- aceita a dica explícita `requires_login` + `login_url` no pedido de extração;
+  a página de autenticação pode usar outro host, mas é aberta no perfil
+  persistente pertencente à URL da fonte e a URL original continua sendo
+  reaberta antes da extração;
 - no perfil portátil, reutiliza o perfil Chromium isolado por hostname; cookies
   e sessões concedidos legitimamente permanecem sob controle do próprio Chrome
   e duas sessões não abrem simultaneamente o mesmo perfil.
@@ -53,6 +57,8 @@ usa CSP, `no-referrer`, `nosniff` e proteção contra framing externo.
 - Não injeta respostas, não altera fingerprint e não oculta automação.
 - Não reutiliza o perfil pessoal do usuário nem lê/exporta valores brutos de
   cookies ou senhas; a persistência ocorre dentro do perfil isolado do Chrome.
+- `login_url` não autoriza preenchimento automático nem envio de credenciais;
+  ela apenas direciona a janela controlada em que a pessoa autentica.
 - Não tenta transformar uma resposta Cloudflare `Block` em Challenge por
   headers ou alteração de fingerprint; apenas challenges realmente emitidos
   pela fonte podem ser concluídos pelo usuário.
