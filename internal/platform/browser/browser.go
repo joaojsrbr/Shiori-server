@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"math"
 )
 
 // NavigateRequest holds the parameters for a navigation action.
@@ -54,8 +55,35 @@ type Provider interface {
 
 // InputEvent represents a user interaction on the screencast canvas.
 type InputEvent struct {
-	Type   string // "mouseMoved", "mousePressed", "mouseReleased"
-	X      int
-	Y      int
-	Button string // "left", "right", "none"
+	Type      string  `json:"type"`
+	X         float64 `json:"x,omitempty"`
+	Y         float64 `json:"y,omitempty"`
+	Button    string  `json:"button,omitempty"`
+	DeltaX    float64 `json:"delta_x,omitempty"`
+	DeltaY    float64 `json:"delta_y,omitempty"`
+	Key       string  `json:"key,omitempty"`
+	Code      string  `json:"code,omitempty"`
+	Text      string  `json:"text,omitempty"`
+	Modifiers int64   `json:"modifiers,omitempty"`
+}
+
+// Valid rejects malformed or abusive remote input before it reaches CDP.
+func (e InputEvent) Valid() bool {
+	if e.Modifiers < 0 || e.Modifiers > 15 || len(e.Key) > 64 || len(e.Code) > 64 || len(e.Text) > 16 {
+		return false
+	}
+	finite := func(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
+	validPoint := finite(e.X) && finite(e.Y) && e.X >= 0 && e.Y >= 0 && e.X <= 20000 && e.Y <= 20000
+	validButton := e.Button == "none" || e.Button == "left" || e.Button == "middle" || e.Button == "right"
+
+	switch e.Type {
+	case "mouseMoved", "mousePressed", "mouseReleased":
+		return validPoint && validButton
+	case "mouseWheel":
+		return validPoint && finite(e.DeltaX) && finite(e.DeltaY) && math.Abs(e.DeltaX) <= 4000 && math.Abs(e.DeltaY) <= 4000
+	case "keyDown", "keyUp":
+		return e.Key != "" && e.Code != ""
+	default:
+		return false
+	}
 }

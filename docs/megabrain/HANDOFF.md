@@ -15,4 +15,7 @@ Iniciar o desenvolvimento do Frontend (Flutter). O Backend atingiu maturidade de
 - Não versionar `dist/shiori-server.exe`.
 - Confirmar compatibilidade da versão Go declarada com o ambiente.
 - PostgreSQL/Valkey/MinIO ainda pertencem ao perfil Docker.
+- O frontend deve resolver `challenge_url` relativo à URL do backend, abrir a
+  página temporária e acompanhar `GET /api/v1/challenges/{token}/status`; não
+  deve acessar cookies ou CDP diretamente.
 

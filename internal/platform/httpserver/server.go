@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -165,7 +166,7 @@ func requestLogger(logger *slog.Logger) func(next http.Handler) http.Handler {
 
 			logger.LogAttrs(r.Context(), slog.LevelInfo, "http request",
 				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
+				slog.String("path", redactSensitivePath(r.URL.Path)),
 				slog.Int("status", ww.Status()),
 				slog.Int("bytes", ww.BytesWritten()),
 				slog.Duration("duration", time.Since(start)),
@@ -173,4 +174,21 @@ func requestLogger(logger *slog.Logger) func(next http.Handler) http.Handler {
 			)
 		})
 	}
+}
+
+func redactSensitivePath(path string) string {
+	const prefix = "/api/v1/challenges/"
+	if !strings.HasPrefix(path, prefix) {
+		return path
+	}
+	remainder := strings.TrimPrefix(path, prefix)
+	if remainder == "assets/client.js" {
+		return path
+	}
+	parts := strings.SplitN(remainder, "/", 2)
+	redacted := prefix + "{redacted}"
+	if len(parts) == 2 {
+		redacted += "/" + parts[1]
+	}
+	return redacted
 }

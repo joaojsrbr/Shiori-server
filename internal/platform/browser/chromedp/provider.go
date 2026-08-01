@@ -372,33 +372,35 @@ func (p *Provider) Screencast(ctx context.Context, sessionID string, frames chan
 		return errors.New("chromedp: session not found")
 	}
 
-	// Wait for context cancellation or session end
+	streamCtx, cancelStream := context.WithCancel(activeSession.ctx)
+	stopCallerCancellation := context.AfterFunc(ctx, cancelStream)
 	defer func() {
-		// Stop screencast if we are leaving
+		stopCallerCancellation()
 		_ = chromedp.Run(activeSession.ctx, page.StopScreencast())
+		cancelStream()
 	}()
 
-	// Register event listener for screencast frames
-	chromedp.ListenTarget(activeSession.ctx, func(ev interface{}) {
+	// The listener is scoped to this WebSocket stream so reconnecting does not
+	// accumulate frame handlers on the long-lived browser session.
+	chromedp.ListenTarget(streamCtx, func(ev interface{}) {
 		if ev, ok := ev.(*page.EventScreencastFrame); ok {
-			// Acknowledge frame to receive the next one
 			go func() {
-				_ = chromedp.Run(activeSession.ctx, page.ScreencastFrameAck(ev.SessionID))
+				_ = chromedp.Run(streamCtx, page.ScreencastFrameAck(ev.SessionID))
 			}()
 
-			// Decode base64 frame
 			data, err := base64.StdEncoding.DecodeString(ev.Data)
 			if err == nil {
 				select {
-				case <-ctx.Done():
+				case <-streamCtx.Done():
 				case frames <- data:
+				default:
+					// Prefer a fresh frame over blocking Chrome's event loop.
 				}
 			}
 		}
 	})
 
-	// Start screencast
-	err := chromedp.Run(activeSession.ctx,
+	err := chromedp.Run(streamCtx,
 		page.StartScreencast().WithFormat(page.ScreencastFormatJpeg).WithQuality(80).WithEveryNthFrame(1),
 	)
 	if err != nil {
@@ -407,10 +409,8 @@ func (p *Provider) Screencast(ctx context.Context, sessionID string, frames chan
 
 	for {
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-activeSession.ctx.Done():
-			return activeSession.ctx.Err()
+		case <-streamCtx.Done():
+			return streamCtx.Err()
 		case ev, ok := <-in:
 			if !ok {
 				return nil
@@ -422,10 +422,28 @@ func (p *Provider) Screencast(ctx context.Context, sessionID string, frames chan
 			case "mousePressed":
 				act = input.DispatchMouseEvent(input.MousePressed, float64(ev.X), float64(ev.Y)).WithButton(input.MouseButton(ev.Button)).WithClickCount(1)
 			case "mouseReleased":
-				act = input.DispatchMouseEvent(input.MouseReleased, float64(ev.X), float64(ev.Y)).WithButton(input.MouseButton(ev.Button)).WithClickCount(1)
+				act = input.DispatchMouseEvent(input.MouseReleased, ev.X, ev.Y).WithButton(input.MouseButton(ev.Button)).WithClickCount(1)
+			case "mouseWheel":
+				act = input.DispatchMouseEvent(input.MouseWheel, ev.X, ev.Y).WithDeltaX(ev.DeltaX).WithDeltaY(ev.DeltaY)
+			case "keyDown":
+				params := input.DispatchKeyEvent(input.KeyDown).
+					WithKey(ev.Key).
+					WithCode(ev.Code).
+					WithModifiers(input.Modifier(ev.Modifiers))
+				if ev.Text != "" {
+					params = params.WithText(ev.Text)
+				}
+				act = params
+			case "keyUp":
+				act = input.DispatchKeyEvent(input.KeyUp).
+					WithKey(ev.Key).
+					WithCode(ev.Code).
+					WithModifiers(input.Modifier(ev.Modifiers))
 			}
 			if act != nil {
-				_ = chromedp.Run(activeSession.ctx, act)
+				if err := chromedp.Run(streamCtx, act); err != nil && streamCtx.Err() == nil {
+					return fmt.Errorf("chromedp: dispatch input: %w", err)
+				}
 			}
 		}
 	}

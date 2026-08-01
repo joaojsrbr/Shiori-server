@@ -16,6 +16,16 @@ Adicione uma entrada por branch mesclada, da mais recente para a mais antiga.
 - Próximo passo:
 ```
 
+## 2026-08-01 — feature/human-challenge-handoff
+
+- Objetivo: transformar o protótipo de challenge em um handoff humano seguro, temporário e verificável.
+- Resultado: estado com TTL/cancelamento, controlador WebSocket único e same-origin, screencast com ponteiro/scroll/teclado, inputs limitados, headers de segurança, token redigido dos logs e conclusão condicionada à nova verificação do DOM.
+- Arquivos principais: `internal/platform/browser/challenge.go`, `internal/jobs/challenge_handler.go`, `internal/platform/browser/chromedp/provider.go`, `api/openapi/shiori.yaml`.
+- Contrato/migrations: endpoints de status, conclusão, cancelamento e WebSocket documentados no OpenAPI; sem migration.
+- Verificações: testes de lifecycle/expiração/cancelamento, validação de input, rejeição cross-origin, verificação antes da retomada; `go vet ./...`; `go test ./...`; smoke test portátil.
+- Decisões/ADRs: ADR 0008; nenhum bypass ou resolução automática de CAPTCHA.
+- Próximo passo: implementar cookies persistentes criptografados por usuário/domínio e o adapter Playwright equivalente no Docker.
+
 ## 2026-07-30 — fix/cloudflare-challenge-detection
 
 - Objetivo: evitar `409 User Action Required` em páginas normais que apenas carregam scripts Cloudflare.

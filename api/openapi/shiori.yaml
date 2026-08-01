@@ -217,7 +217,130 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /api/v1/challenges/{token}:
+    get:
+      summary: Open the temporary human-verification controller
+      operationId: openHumanChallenge
+      tags: [Browser]
+      parameters:
+        - $ref: '#/components/parameters/ChallengeToken'
+      responses:
+        '200':
+          description: Same-origin HTML controller for the isolated browser session
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            text/html:
+              schema: { type: string }
+        '404':
+          $ref: '#/components/responses/ChallengeNotFound'
+        '410':
+          $ref: '#/components/responses/ChallengeExpired'
+    delete:
+      summary: Cancel a pending human-verification session
+      operationId: cancelHumanChallenge
+      tags: [Browser]
+      parameters:
+        - $ref: '#/components/parameters/ChallengeToken'
+      responses:
+        '204':
+          description: Challenge cancelled
+        '404':
+          $ref: '#/components/responses/ChallengeNotFound'
+        '410':
+          $ref: '#/components/responses/ChallengeExpired'
+
+  /api/v1/challenges/{token}/status:
+    get:
+      summary: Get the state and expiry of a human-verification session
+      operationId: getHumanChallengeStatus
+      tags: [Browser]
+      parameters:
+        - $ref: '#/components/parameters/ChallengeToken'
+      responses:
+        '200':
+          description: Current challenge state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChallengeStatus'
+        '404':
+          $ref: '#/components/responses/ChallengeNotFound'
+
+  /api/v1/challenges/{token}/complete:
+    post:
+      summary: Ask the backend to verify and resume a human challenge
+      description: Completion succeeds only after the backend confirms that the interactive challenge is no longer visible.
+      operationId: completeHumanChallenge
+      tags: [Browser]
+      parameters:
+        - $ref: '#/components/parameters/ChallengeToken'
+      responses:
+        '200':
+          description: Challenge verified and extraction resumed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChallengeStatus'
+        '409':
+          description: The challenge is still visible or is in an incompatible state
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          $ref: '#/components/responses/ChallengeNotFound'
+        '410':
+          $ref: '#/components/responses/ChallengeExpired'
+
+  /api/v1/challenges/{token}/ws:
+    get:
+      summary: Upgrade to the same-origin browser screencast WebSocket
+      description: Binary messages are JPEG frames; client messages are validated pointer, wheel, and keyboard input events.
+      operationId: streamHumanChallenge
+      tags: [Browser]
+      parameters:
+        - $ref: '#/components/parameters/ChallengeToken'
+      responses:
+        '101':
+          description: WebSocket protocol switched
+        '403':
+          description: Cross-origin WebSocket request rejected
+        '404':
+          $ref: '#/components/responses/ChallengeNotFound'
+        '409':
+          description: Another controller is already connected
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
 components:
+  parameters:
+    ChallengeToken:
+      name: token
+      in: path
+      required: true
+      description: Opaque, short-lived, single-purpose browser capability token
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    ChallengeNotFound:
+      description: Challenge token not found
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ChallengeExpired:
+      description: Challenge expired or was cancelled
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
   schemas:
     Problem:
       type: object
@@ -251,6 +374,22 @@ components:
       required:
         - name
         - available
+
+    ChallengeStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [pending, verifying, completed, cancelled, expired]
+        connected:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+      required: [status, connected, created_at, expires_at]
 
     CapabilitiesResponse:
       type: object
