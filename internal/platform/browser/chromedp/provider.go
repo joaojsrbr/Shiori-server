@@ -2,15 +2,18 @@ package chromedp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
@@ -21,16 +24,18 @@ import (
 
 // Provider implements browser.Provider using local chromedp.
 type Provider struct {
-	baseDir  string
-	mu       sync.Mutex
-	sessions map[string]*session
+	baseDir       string
+	mu            sync.Mutex
+	sessions      map[string]*session
+	profileLeases map[string]chan struct{}
 }
 
 type session struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	profileDir string
-	status     int
+	ctx            context.Context
+	cancel         context.CancelFunc
+	releaseProfile func()
+	requestedURL   string
+	status         int
 }
 
 type renderedPage struct {
@@ -40,6 +45,7 @@ type renderedPage struct {
 	Title               string   `json:"title"`
 	BodyText            string   `json:"bodyText"`
 	HasVisibleChallenge bool     `json:"hasVisibleChallenge"`
+	HasVisibleLogin     bool     `json:"hasVisibleLogin"`
 }
 
 const automaticChallengeWait = 10 * time.Second
@@ -48,8 +54,9 @@ const automaticChallengeWait = 10 * time.Second
 // baseDir is used for isolated browser profiles.
 func New(baseDir string) *Provider {
 	return &Provider{
-		baseDir:  baseDir,
-		sessions: make(map[string]*session),
+		baseDir:       baseDir,
+		sessions:      make(map[string]*session),
+		profileLeases: make(map[string]chan struct{}),
 	}
 }
 
@@ -64,10 +71,30 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 		return nil, errors.New("chromedp: browser not available")
 	}
 
-	// Create isolated profile dir for this session
+	targetURL := req.URL
+	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+		targetURL = "https://" + targetURL
+	}
+	profileKey, err := domainProfileKey(targetURL)
+	if err != nil {
+		return nil, fmt.Errorf("chromedp: invalid target URL: %w", err)
+	}
+	releaseProfile, err := p.acquireProfile(ctx, profileKey)
+	if err != nil {
+		return nil, fmt.Errorf("chromedp: waiting for domain profile: %w", err)
+	}
+	releaseOnError := true
+	defer func() {
+		if releaseOnError {
+			releaseProfile()
+		}
+	}()
+
+	// Chromium owns cookie and credential encryption inside this persistent,
+	// domain-isolated profile. The backend never exports their raw values.
 	sessionID := uuid.New().String()
-	profileDir := filepath.Join(p.baseDir, "session_"+sessionID)
-	if err := os.MkdirAll(profileDir, 0755); err != nil {
+	profileDir := filepath.Join(p.baseDir, "domains", profileKey)
+	if err := os.MkdirAll(profileDir, 0700); err != nil {
 		return nil, fmt.Errorf("chromedp: create profile directory: %w", err)
 	}
 
@@ -103,11 +130,6 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 		timeoutCtx, cancelTimeout = context.WithTimeout(browserCtx, 30*time.Second)
 	}
 	defer cancelTimeout()
-
-	targetURL := req.URL
-	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
-		targetURL = "https://" + targetURL
-	}
 
 	actions := []chromedp.Action{
 		chromedp.Navigate(targetURL),
@@ -189,12 +211,14 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 
 	p.mu.Lock()
 	p.sessions[sessionID] = &session{
-		ctx:        browserCtx,
-		cancel:     cancelSession,
-		profileDir: profileDir,
-		status:     200,
+		ctx:            browserCtx,
+		cancel:         cancelSession,
+		releaseProfile: releaseProfile,
+		requestedURL:   targetURL,
+		status:         200,
 	}
 	p.mu.Unlock()
+	releaseOnError = false
 
 	// Simplification for MVP: We don't have true HTTP status code natively in chromedp without network interception.
 	// Return 200 until response interception is implemented.
@@ -203,6 +227,39 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 		FinalURL:  finalURL,
 		Status:    200,
 	}, nil
+}
+
+func domainProfileKey(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	hostname := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if hostname == "" {
+		return "", errors.New("URL has no hostname")
+	}
+	hash := sha256.Sum256([]byte(hostname))
+	return fmt.Sprintf("domain_%x", hash[:12]), nil
+}
+
+func (p *Provider) acquireProfile(ctx context.Context, key string) (func(), error) {
+	p.mu.Lock()
+	lease, ok := p.profileLeases[key]
+	if !ok {
+		lease = make(chan struct{}, 1)
+		p.profileLeases[key] = lease
+	}
+	p.mu.Unlock()
+
+	select {
+	case lease <- struct{}{}:
+		var once sync.Once
+		return func() {
+			once.Do(func() { <-lease })
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (p *Provider) Snapshot(ctx context.Context, sessionID string) (*browser.PageSnapshot, error) {
@@ -231,7 +288,7 @@ func (p *Provider) Snapshot(ctx context.Context, sessionID string) (*browser.Pag
 	if err != nil {
 		return nil, fmt.Errorf("chromedp: capture snapshot: %w", err)
 	}
-	if requiresUserAction(page) {
+	if classifyUserAction(page, activeSession.requestedURL) == browser.UserActionChallenge {
 		page, err = waitForAutomaticChallenge(snapshotCtx, page)
 		if err != nil {
 			return nil, fmt.Errorf("chromedp: wait for automatic challenge: %w", err)
@@ -241,13 +298,15 @@ func (p *Provider) Snapshot(ctx context.Context, sessionID string) (*browser.Pag
 		return nil, errors.New("chromedp: captured an empty document")
 	}
 
+	actionKind := classifyUserAction(page, activeSession.requestedURL)
 	return &browser.PageSnapshot{
-		HTML:       page.HTML,
-		FinalURL:   page.FinalURL,
-		Status:     activeSession.status,
-		Headers:    make(map[string]string),
-		Assets:     page.Assets,
-		UserAction: requiresUserAction(page),
+		HTML:           page.HTML,
+		FinalURL:       page.FinalURL,
+		Status:         activeSession.status,
+		Headers:        make(map[string]string),
+		Assets:         page.Assets,
+		UserAction:     actionKind != browser.UserActionNone,
+		UserActionKind: actionKind,
 	}, nil
 }
 
@@ -277,12 +336,17 @@ func captureRenderedPage(ctx context.Context) (renderedPage, error) {
 				"iframe[src*='challenges.cloudflare.com']",
 				"form[action*='/cdn-cgi/challenge-platform/']"
 			];
+			const visiblePassword = Array.from(document.querySelectorAll("input[type='password']")).some(isVisible);
+			const visibleIdentity = Array.from(document.querySelectorAll(
+				"input[type='email'], input[autocomplete='username'], input[name*='email' i], input[name*='user' i]"
+			)).some(isVisible);
 			return {
 				title: document.title || "",
 				bodyText: (document.body && document.body.innerText || "").slice(0, 8192),
 				hasVisibleChallenge: selectors.some((selector) =>
 					Array.from(document.querySelectorAll(selector)).some(isVisible)
-				)
+				),
+				hasVisibleLogin: visiblePassword || (visibleIdentity && /sign in|log in|entrar|acessar/i.test(document.body && document.body.innerText || ""))
 			};
 		})()`, &page),
 	)
@@ -295,7 +359,7 @@ func waitForAutomaticChallenge(ctx context.Context, current renderedPage) (rende
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
-	for requiresUserAction(current) {
+	for isCloudflareChallenge(current) {
 		select {
 		case <-ctx.Done():
 			return renderedPage{}, ctx.Err()
@@ -312,7 +376,7 @@ func waitForAutomaticChallenge(ctx context.Context, current renderedPage) (rende
 	return current, nil
 }
 
-func requiresUserAction(page renderedPage) bool {
+func isCloudflareChallenge(page renderedPage) bool {
 	if page.HasVisibleChallenge {
 		return true
 	}
@@ -344,6 +408,50 @@ func requiresUserAction(page renderedPage) bool {
 	return false
 }
 
+func classifyUserAction(page renderedPage, requestedURL string) browser.UserActionKind {
+	bodyText := strings.ToLower(page.BodyText)
+	blockedMarkers := []string{
+		"why have i been blocked?",
+		"sorry, you have been blocked",
+		"cloudflare ray id",
+	}
+	for _, marker := range blockedMarkers {
+		if strings.Contains(bodyText, marker) {
+			return browser.UserActionBlocked
+		}
+	}
+	if isCloudflareChallenge(page) {
+		return browser.UserActionChallenge
+	}
+	if page.HasVisibleLogin || redirectedToLogin(requestedURL, page.FinalURL) {
+		return browser.UserActionLogin
+	}
+	return browser.UserActionNone
+}
+
+func requiresUserAction(page renderedPage) bool {
+	return classifyUserAction(page, "") != browser.UserActionNone
+}
+
+func redirectedToLogin(requestedURL, finalURL string) bool {
+	if requestedURL == "" || finalURL == "" || requestedURL == finalURL {
+		return false
+	}
+	parsed, err := url.Parse(finalURL)
+	if err != nil {
+		return false
+	}
+	path := strings.ToLower(strings.Trim(parsed.Path, "/"))
+	segments := strings.Split(path, "/")
+	for _, segment := range segments {
+		switch segment {
+		case "login", "signin", "sign-in", "sign_in":
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Provider) CloseSession(ctx context.Context, sessionID string) error {
 	p.mu.Lock()
 	activeSession, exists := p.sessions[sessionID]
@@ -356,9 +464,15 @@ func (p *Provider) CloseSession(ctx context.Context, sessionID string) error {
 		return nil
 	}
 
+	closeCtx, cancelClose := context.WithTimeout(activeSession.ctx, 5*time.Second)
+	closeErr := chromedp.Cancel(closeCtx)
+	cancelClose()
 	activeSession.cancel()
-	if err := os.RemoveAll(activeSession.profileDir); err != nil {
-		return fmt.Errorf("chromedp: remove profile directory: %w", err)
+	if activeSession.releaseProfile != nil {
+		activeSession.releaseProfile()
+	}
+	if closeErr != nil && !errors.Is(closeErr, context.Canceled) {
+		return fmt.Errorf("chromedp: close browser gracefully: %w", closeErr)
 	}
 	return nil
 }
@@ -439,6 +553,10 @@ func (p *Provider) Screencast(ctx context.Context, sessionID string, frames chan
 					WithKey(ev.Key).
 					WithCode(ev.Code).
 					WithModifiers(input.Modifier(ev.Modifiers))
+			case "viewport":
+				act = emulation.SetDeviceMetricsOverride(ev.Width, ev.Height, 1, false).
+					WithScreenWidth(ev.Width).
+					WithScreenHeight(ev.Height)
 			}
 			if act != nil {
 				if err := chromedp.Run(streamCtx, act); err != nil && streamCtx.Err() == nil {

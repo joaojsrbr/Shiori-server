@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/joaojsr/shiori-server/internal/jobs"
 	"github.com/joaojsr/shiori-server/internal/library"
 	"github.com/joaojsr/shiori-server/internal/platform/browser"
+	"github.com/joaojsr/shiori-server/internal/platform/events"
 	"github.com/joaojsr/shiori-server/internal/platform/queue"
 )
 
@@ -19,6 +22,33 @@ type mockBrowserProvider struct {
 	FailSnapshot bool
 	UserAction   bool
 	HTMLReturn   string
+}
+
+type handoffBrowser struct {
+	navigations int
+	closes      int
+	snapshots   []*browser.PageSnapshot
+}
+
+func (b *handoffBrowser) IsAvailable() bool { return true }
+func (b *handoffBrowser) Navigate(context.Context, browser.NavigateRequest) (*browser.NavigateResult, error) {
+	b.navigations++
+	return &browser.NavigateResult{SessionID: fmt.Sprintf("session-%d", b.navigations)}, nil
+}
+func (b *handoffBrowser) Snapshot(context.Context, string) (*browser.PageSnapshot, error) {
+	if len(b.snapshots) == 0 {
+		return nil, errors.New("no snapshot configured")
+	}
+	snapshot := b.snapshots[0]
+	b.snapshots = b.snapshots[1:]
+	return snapshot, nil
+}
+func (b *handoffBrowser) CloseSession(context.Context, string) error {
+	b.closes++
+	return nil
+}
+func (b *handoffBrowser) Screencast(context.Context, string, chan<- []byte, <-chan browser.InputEvent) error {
+	return nil
 }
 
 func (m *mockBrowserProvider) IsAvailable() bool { return true }
@@ -127,5 +157,70 @@ func TestExtractHandler_Failures(t *testing.T) {
 	err = handler(context.Background(), job)
 	if err == nil {
 		t.Error("expected error due to extraction failure")
+	}
+}
+
+func TestExtractHandlerResumesOriginalURLAfterLogin(t *testing.T) {
+	b := &handoffBrowser{snapshots: []*browser.PageSnapshot{
+		{HTML: "<form><input type=password></form>", FinalURL: "https://example.test/login", UserAction: true, UserActionKind: browser.UserActionLogin},
+		{HTML: "<main>Requested manga page</main>", FinalURL: "https://example.test/manga/1"},
+	}}
+	extractor := &mockExtractionProvider{JSONReturn: json.RawMessage(`{"title":"Authenticated Manga"}`)}
+	repo := &mockMediaRepoExtract{}
+	manager := browser.NewChallengeManager()
+	hub := events.NewHub()
+	job := &queue.Job{ID: "login-job"}
+	payload := jobs.ExtractPayload{URL: "https://example.test/manga/1", Target: extraction.TargetManga}
+	job.Payload, _ = json.Marshal(payload)
+
+	stream := hub.Subscribe("job:" + job.ID)
+	defer hub.Unsubscribe("job:"+job.ID, stream)
+	done := make(chan error, 1)
+	go func() {
+		done <- jobs.NewExtractHandler(b, extractor, repo, manager, hub)(context.Background(), job)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case raw := <-stream:
+			event, _ := raw.(map[string]any)
+			if event["event"] != "challenge" {
+				continue
+			}
+			data, _ := event["data"].(map[string]string)
+			if data["kind"] != string(browser.UserActionLogin) {
+				t.Fatalf("challenge kind = %q, want login", data["kind"])
+			}
+			token := strings.TrimPrefix(data["challenge_url"], "/api/v1/challenges/")
+			if _, err := manager.BeginVerification(token); err != nil {
+				t.Fatalf("BeginVerification() error = %v", err)
+			}
+			if _, err := manager.Resolve(token); err != nil {
+				t.Fatalf("Resolve() error = %v", err)
+			}
+			goto waitForResult
+		case <-deadline:
+			t.Fatal("timed out waiting for login handoff event")
+		}
+	}
+
+waitForResult:
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("handler error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for resumed extraction")
+	}
+	if b.navigations != 2 {
+		t.Fatalf("navigations = %d, want initial + resumed URL", b.navigations)
+	}
+	if b.closes != 2 {
+		t.Fatalf("closes = %d, want both browser sessions closed", b.closes)
+	}
+	if repo.SavedTitle != "Authenticated Manga" {
+		t.Fatalf("saved title = %q", repo.SavedTitle)
 	}
 }

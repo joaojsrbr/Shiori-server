@@ -274,12 +274,29 @@ func NewExtractHandler(
 			}
 
 			if snap.UserAction {
-				token := cm.Create(navRes.SessionID)
+				if snap.UserActionKind == browser.UserActionBlocked {
+					b.CloseSession(context.Background(), navRes.SessionID)
+					return sendError(
+						"Source Blocked",
+						"The source returned a definitive Cloudflare block instead of an interactive challenge.",
+						fmt.Errorf("source blocked by Cloudflare"),
+					)
+				}
+				actionKind := snap.UserActionKind
+				if actionKind == browser.UserActionNone {
+					actionKind = browser.UserActionChallenge
+				}
+				token := cm.Create(navRes.SessionID, actionKind)
 				challengeURL := "/api/v1/challenges/" + token
-				slog.Info("user action required, waiting for challenge resolution", "job_id", job.ID)
+				slog.Info("user action required, waiting for browser handoff", "job_id", job.ID, "kind", actionKind)
 
+				message := "The page requires human verification (captcha/cloudflare)."
+				if actionKind == browser.UserActionLogin {
+					message = "The source requires login. Authenticate in the remote browser to continue."
+				}
 				sendEvent("challenge", map[string]string{
-					"message":       "The page requires human interaction (captcha/cloudflare).",
+					"kind":          string(actionKind),
+					"message":       message,
 					"challenge_url": challengeURL,
 					"instance":      challengeURL,
 				})
@@ -291,16 +308,25 @@ func NewExtractHandler(
 					return sendError("Challenge Failed", "Challenge resolution failed or timed out", waitErr)
 				}
 
-				// Take snapshot again after challenge is solved
-				sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot after challenge..."})
+				// Close gracefully so Chromium persists cookies, then reopen the
+				// exact requested URL with the same domain profile. This prevents
+				// extracting an account/landing page after login.
+				if err := b.CloseSession(context.Background(), navRes.SessionID); err != nil {
+					return sendError("Browser Error", "Failed to persist browser session: "+err.Error(), err)
+				}
+				sendEvent("progress", map[string]string{"step": "resuming", "message": "Reopening the requested page with the verified session..."})
+				navRes, err = b.Navigate(ctx, navReq)
+				if err != nil {
+					return sendError("Browser Error", "Failed to resume navigation: "+err.Error(), err)
+				}
 				snap, err = b.Snapshot(ctx, navRes.SessionID)
 				if err != nil {
 					b.CloseSession(context.Background(), navRes.SessionID)
-					return sendError("Browser Error", "Failed to get snapshot after challenge: "+err.Error(), err)
+					return sendError("Browser Error", "Failed to snapshot the resumed page: "+err.Error(), err)
 				}
 				if snap.UserAction {
 					b.CloseSession(context.Background(), navRes.SessionID)
-					return sendError("Challenge Failed", "User action still required after resolution", fmt.Errorf("user action still required"))
+					return sendError("Human Action Failed", "The requested page still requires human action after the session was resumed.", fmt.Errorf("user action still required: %s", snap.UserActionKind))
 				}
 			}
 

@@ -30,7 +30,12 @@ Atualizado em: 2026-08-01
   10 segundos para concluir automaticamente antes do estado de ação humana.
 - Desafios interativos usam handoff temporário por screencast/WebSocket com
   TTL, controlador único, validação de origem e de input, cancelamento e
-  verificação do DOM pelo backend antes da retomada (ADR 0008).
+  verificação do DOM pelo backend antes da retomada. A página sincroniza toda a
+  área útil com o viewport remoto para manter frame e coordenadas alinhados
+  (ADR 0008). No portátil single-user, perfis Chromium persistentes e
+  serializados por hostname mantêm cookies legítimos sem expô-los ao backend.
+  Formulários/redirecionamentos de login usam o mesmo handoff e a URL original
+  é reaberta depois da autenticação antes de qualquer extração.
 - ADRs iniciais estão em `docs/adr/`.
 - A entrada do NuExtract3 usa metadados + Markdown, orçamento conservador da
   janela e chunks semânticos com limite rígido (ADR 0009).

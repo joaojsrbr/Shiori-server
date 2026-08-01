@@ -23,13 +23,23 @@ type NavigateResult struct {
 
 // PageSnapshot contains a sanitised DOM snapshot and metadata.
 type PageSnapshot struct {
-	HTML       string
-	FinalURL   string
-	Status     int
-	Headers    map[string]string
-	Assets     []string // List of observed asset URLs
-	UserAction bool     // True if a challenge/captcha requires user action
+	HTML           string
+	FinalURL       string
+	Status         int
+	Headers        map[string]string
+	Assets         []string // List of observed asset URLs
+	UserAction     bool     // True when navigation cannot proceed without a person.
+	UserActionKind UserActionKind
 }
+
+type UserActionKind string
+
+const (
+	UserActionNone      UserActionKind = ""
+	UserActionChallenge UserActionKind = "challenge"
+	UserActionLogin     UserActionKind = "login"
+	UserActionBlocked   UserActionKind = "blocked"
+)
 
 // Provider abstracts a browser automation tool.
 type Provider interface {
@@ -65,6 +75,8 @@ type InputEvent struct {
 	Code      string  `json:"code,omitempty"`
 	Text      string  `json:"text,omitempty"`
 	Modifiers int64   `json:"modifiers,omitempty"`
+	Width     int64   `json:"width,omitempty"`
+	Height    int64   `json:"height,omitempty"`
 }
 
 // Valid rejects malformed or abusive remote input before it reaches CDP.
@@ -83,6 +95,8 @@ func (e InputEvent) Valid() bool {
 		return validPoint && finite(e.DeltaX) && finite(e.DeltaY) && math.Abs(e.DeltaX) <= 4000 && math.Abs(e.DeltaY) <= 4000
 	case "keyDown", "keyUp":
 		return e.Key != "" && e.Code != ""
+	case "viewport":
+		return e.Width >= 320 && e.Width <= 3840 && e.Height >= 240 && e.Height <= 2160
 	default:
 		return false
 	}
