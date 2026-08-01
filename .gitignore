@@ -52,3 +52,4 @@ blob-report/
 .DS_Store
 Thumbs.db
 
+/solver
