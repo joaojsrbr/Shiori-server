@@ -49,3 +49,15 @@ DOM renderizado
 
 O contexto padrão é `8192` tokens, a saída reserva no máximo `2048`, e cada
 chunk tem teto adicional de `12000` bytes. Ambos os limites são configuráveis.
+
+## Retomada após ação humana
+
+```text
+URL original
+  -> challenge/login detectado
+  -> handoff humano no mesmo Chromium
+  -> confirmação por snapshot
+  -> fechamento gracioso e persistência do perfil por hostname
+  -> reabertura obrigatória da URL original
+  -> ainda bloqueado/login? falhar; caso contrário, extrair
+```

@@ -189,6 +189,38 @@ func TestProviderScreencastAcceptsKeyboardInput(t *testing.T) {
 	}
 }
 
+func TestProviderDetectsLoginRedirect(t *testing.T) {
+	if os.Getenv("SHIORI_BROWSER_INTEGRATION_TEST") != "1" {
+		t.Skip("set SHIORI_BROWSER_INTEGRATION_TEST=1 to run with a local Chrome or Edge installation")
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/protected" {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		fmt.Fprint(w, `<!doctype html><html><body><form><label>Email<input type="email"></label><label>Password<input type="password"></label><button>Sign in</button></form></body></html>`)
+	}))
+	defer server.Close()
+
+	provider := New(t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	navigation, err := provider.Navigate(ctx, browser.NavigateRequest{URL: server.URL + "/protected"})
+	if err != nil {
+		t.Fatalf("Navigate() error = %v", err)
+	}
+	defer provider.CloseSession(context.Background(), navigation.SessionID)
+
+	snapshot, err := provider.Snapshot(ctx, navigation.SessionID)
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if !snapshot.UserAction || snapshot.UserActionKind != browser.UserActionLogin {
+		t.Fatalf("action = (%v, %q), want login", snapshot.UserAction, snapshot.UserActionKind)
+	}
+}
+
 func TestRequiresUserAction(t *testing.T) {
 	tests := []struct {
 		name string
@@ -225,6 +257,53 @@ func TestRequiresUserAction(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := requiresUserAction(tt.page); got != tt.want {
 				t.Errorf("requiresUserAction() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifyUserAction(t *testing.T) {
+	tests := []struct {
+		name      string
+		page      renderedPage
+		requested string
+		want      browser.UserActionKind
+	}{
+		{
+			name:      "visible login form",
+			page:      renderedPage{FinalURL: "https://example.com/login", HasVisibleLogin: true},
+			requested: "https://example.com/chapter/1",
+			want:      browser.UserActionLogin,
+		},
+		{
+			name:      "redirect to sign in",
+			page:      renderedPage{FinalURL: "https://example.com/users/sign_in"},
+			requested: "https://example.com/chapter/1",
+			want:      browser.UserActionLogin,
+		},
+		{
+			name:      "definitive cloudflare block",
+			page:      renderedPage{FinalURL: "https://example.com/chapter/1", BodyText: "Why have I been blocked? Cloudflare Ray ID"},
+			requested: "https://example.com/chapter/1",
+			want:      browser.UserActionBlocked,
+		},
+		{
+			name:      "interactive challenge",
+			page:      renderedPage{FinalURL: "https://example.com/chapter/1", HasVisibleChallenge: true},
+			requested: "https://example.com/chapter/1",
+			want:      browser.UserActionChallenge,
+		},
+		{
+			name:      "ordinary redirect",
+			page:      renderedPage{FinalURL: "https://example.com/chapter/1/"},
+			requested: "https://example.com/chapter/1",
+			want:      browser.UserActionNone,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyUserAction(tt.page, tt.requested); got != tt.want {
+				t.Fatalf("classifyUserAction() = %q, want %q", got, tt.want)
 			}
 		})
 	}

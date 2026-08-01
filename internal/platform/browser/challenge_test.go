@@ -110,6 +110,9 @@ func TestInputEventValid(t *testing.T) {
 		{name: "mouse", event: InputEvent{Type: "mousePressed", X: 10, Y: 20, Button: "left"}, want: true},
 		{name: "wheel", event: InputEvent{Type: "mouseWheel", X: 10, Y: 20, DeltaY: 120}, want: true},
 		{name: "keyboard", event: InputEvent{Type: "keyDown", Key: "a", Code: "KeyA", Text: "a"}, want: true},
+		{name: "viewport", event: InputEvent{Type: "viewport", Width: 1280, Height: 720}, want: true},
+		{name: "viewport too small", event: InputEvent{Type: "viewport", Width: 200, Height: 100}, want: false},
+		{name: "viewport too large", event: InputEvent{Type: "viewport", Width: 5000, Height: 3000}, want: false},
 		{name: "unknown", event: InputEvent{Type: "executeScript"}, want: false},
 		{name: "negative coordinate", event: InputEvent{Type: "mouseMoved", X: -1, Y: 20, Button: "none"}, want: false},
 		{name: "oversized wheel", event: InputEvent{Type: "mouseWheel", X: 1, Y: 1, DeltaY: 5000}, want: false},
@@ -120,5 +123,17 @@ func TestInputEventValid(t *testing.T) {
 				t.Fatalf("Valid() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestChallengeViewIncludesActionKind(t *testing.T) {
+	manager := NewChallengeManager()
+	token := manager.Create("session-login", UserActionLogin)
+	view, err := manager.Get(token)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if view.Kind != UserActionLogin {
+		t.Fatalf("Kind = %q, want %q", view.Kind, UserActionLogin)
 	}
 }

@@ -32,6 +32,7 @@ const defaultChallengeTTL = 3 * time.Minute
 // ChallengeView is the public, secret-free state returned to API clients.
 type ChallengeView struct {
 	Status    ChallengeStatus `json:"status"`
+	Kind      UserActionKind  `json:"kind"`
 	Connected bool            `json:"connected"`
 	CreatedAt time.Time       `json:"created_at"`
 	ExpiresAt time.Time       `json:"expires_at"`
@@ -39,6 +40,7 @@ type ChallengeView struct {
 
 type challenge struct {
 	sessionID string
+	kind      UserActionKind
 	status    ChallengeStatus
 	connected bool
 	createdAt time.Time
@@ -56,6 +58,7 @@ func (c *challenge) finish(status ChallengeStatus) {
 func (c *challenge) view() ChallengeView {
 	return ChallengeView{
 		Status:    c.status,
+		Kind:      c.kind,
 		Connected: c.connected,
 		CreatedAt: c.createdAt.UTC(),
 		ExpiresAt: c.expiresAt.UTC(),
@@ -87,15 +90,20 @@ func NewChallengeManagerWithTTL(ttl time.Duration) *ChallengeManager {
 }
 
 // Create generates a single-purpose, short-lived capability token.
-func (m *ChallengeManager) Create(sessionID string) string {
+func (m *ChallengeManager) Create(sessionID string, kinds ...UserActionKind) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	now := m.now()
 	m.removeStaleLocked(now)
 	token := uuid.NewString()
+	kind := UserActionChallenge
+	if len(kinds) > 0 && (kinds[0] == UserActionChallenge || kinds[0] == UserActionLogin) {
+		kind = kinds[0]
+	}
 	m.challenges[token] = &challenge{
 		sessionID: sessionID,
+		kind:      kind,
 		status:    ChallengePending,
 		createdAt: now,
 		expiresAt: now.Add(m.ttl),

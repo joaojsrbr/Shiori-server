@@ -16,6 +16,16 @@ Adicione uma entrada por branch mesclada, da mais recente para a mais antiga.
 - Próximo passo:
 ```
 
+## 2026-08-01 — fix/fullscreen-challenge-handoff
+
+- Objetivo: permitir interação precisa com desafios reais usando toda a área disponível da página de handoff.
+- Resultado: canvas ocupa 100% do viewport útil, `ResizeObserver` envia dimensões limitadas ao backend, o adapter chromedp ajusta as métricas do navegador, perfis persistentes/serializados por hostname conservam sessões legítimas e login/redirecionamento retomam obrigatoriamente a URL original.
+- Arquivos principais: `internal/jobs/challenge_handler.go`, `internal/platform/browser/browser.go`, `internal/platform/browser/chromedp/provider.go`, `internal/platform/browser/chromedp/profile_test.go`.
+- Contrato/migrations: `ChallengeStatus` ganhou `kind: challenge|login`; mensagem WebSocket interna ganhou o tipo validado `viewport`; sem migration.
+- Verificações: testes de limites do viewport, cliente responsivo, classificação login/challenge/block, retomada da URL original, chave estável por hostname, exclusão concorrente do perfil e integração com Chrome real comprovando redirecionamento de login, teclado remoto e cookie persistente entre sessões; suíte Go, build e smoke portátil.
+- Decisões/ADRs: ADR 0008 atualizado; headers não podem converter uma regra Cloudflare `Block` em CAPTCHA e nenhuma evasão foi adicionada.
+- Próximo passo: adicionar identidade explícita ao perfil antes de suportar instalações multiusuário e oferecer revogação/limpeza de sessão por domínio.
+
 ## 2026-08-01 — fix/debug-route-mount
 
 - Objetivo: corrigir o panic do Chi ao iniciar o executável com `--log-level debug`.

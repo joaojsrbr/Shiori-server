@@ -219,7 +219,7 @@ paths:
 
   /api/v1/challenges/{token}:
     get:
-      summary: Open the temporary human-verification controller
+      summary: Open the temporary human-action controller
       operationId: openHumanChallenge
       tags: [Browser]
       parameters:
@@ -270,8 +270,8 @@ paths:
 
   /api/v1/challenges/{token}/complete:
     post:
-      summary: Ask the backend to verify and resume a human challenge
-      description: Completion succeeds only after the backend confirms that the interactive challenge is no longer visible.
+      summary: Ask the backend to verify and resume a human action
+      description: Completion succeeds only after the backend confirms that the interactive challenge or login is no longer visible. The extraction worker then reopens the originally requested URL.
       operationId: completeHumanChallenge
       tags: [Browser]
       parameters:
@@ -297,7 +297,7 @@ paths:
   /api/v1/challenges/{token}/ws:
     get:
       summary: Upgrade to the same-origin browser screencast WebSocket
-      description: Binary messages are JPEG frames; client messages are validated pointer, wheel, and keyboard input events.
+      description: Binary messages are JPEG frames; client messages are validated viewport, pointer, wheel, and keyboard input events.
       operationId: streamHumanChallenge
       tags: [Browser]
       parameters:
@@ -381,6 +381,10 @@ components:
         status:
           type: string
           enum: [pending, verifying, completed, cancelled, expired]
+        kind:
+          type: string
+          enum: [challenge, login]
+          description: Human action that must be completed in the isolated browser session.
         connected:
           type: boolean
         created_at:
@@ -389,7 +393,7 @@ components:
         expires_at:
           type: string
           format: date-time
-      required: [status, connected, created_at, expires_at]
+      required: [status, kind, connected, created_at, expires_at]
 
     CapabilitiesResponse:
       type: object

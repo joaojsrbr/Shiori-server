@@ -51,6 +51,17 @@ func TestChallengeHandlerServesProtectedHandoff(t *testing.T) {
 	if recorder.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", recorder.Header().Get("Cache-Control"))
 	}
+	if !strings.Contains(recorder.Body.String(), "width: 100%; height: 100%") {
+		t.Fatal("handoff canvas is not configured to fill the available viewport")
+	}
+
+	clientRecorder := httptest.NewRecorder()
+	clientRequest := httptest.NewRequest(http.MethodGet, "/challenges/assets/client.js", nil)
+	challengeRouter(&challengeBrowser{}, manager).ServeHTTP(clientRecorder, clientRequest)
+	if !strings.Contains(clientRecorder.Body.String(), "new ResizeObserver(measureViewport)") ||
+		!strings.Contains(clientRecorder.Body.String(), "type: 'viewport'") {
+		t.Fatal("handoff client does not synchronize its viewport with the remote browser")
+	}
 }
 
 func TestChallengeHandlerVerifiesBeforeCompleting(t *testing.T) {

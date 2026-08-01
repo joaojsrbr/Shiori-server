@@ -58,8 +58,8 @@ const screencastHTML = `<!doctype html>
     header { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
     #status { margin: 0; font-weight: 650; }
     #timer { color: #c5c7ce; font-variant-numeric: tabular-nums; }
-    main { min-height: 0; display: grid; place-items: center; padding: 12px; overflow: auto; }
-    canvas { display: block; max-width: 100%; height: auto; background: white; border: 1px solid #42454d; border-radius: 8px; outline: none; touch-action: none; }
+    main { min-width: 0; min-height: 0; overflow: hidden; background: #fff; }
+    canvas { display: block; width: 100%; height: 100%; background: white; outline: none; touch-action: none; }
     canvas:focus-visible { box-shadow: 0 0 0 3px #8ab4ff; }
     footer { display: flex; justify-content: flex-end; gap: 8px; }
     button { border: 0; border-radius: 6px; padding: 10px 16px; font: inherit; font-weight: 650; cursor: pointer; }
@@ -82,6 +82,7 @@ const challengeClientJS = `(() => {
   const token = parts[parts.length - 1];
   const base = '/api/v1/challenges/' + encodeURIComponent(token);
   const canvas = document.getElementById('screencast');
+  const viewport = canvas.parentElement;
   const context = canvas.getContext('2d');
   const status = document.getElementById('status');
   const timer = document.getElementById('timer');
@@ -92,6 +93,17 @@ const challengeClientJS = `(() => {
   let expiresAt;
   let movePending = false;
   let lastMove;
+  let viewportPending;
+
+  const measureViewport = () => {
+    const rect = viewport.getBoundingClientRect();
+    viewportPending = {
+      type: 'viewport',
+      width: Math.max(320, Math.min(3840, Math.round(rect.width))),
+      height: Math.max(240, Math.min(2160, Math.round(rect.height)))
+    };
+    send(viewportPending);
+  };
 
   const setStatus = (message) => { status.textContent = message; };
   const send = (payload) => {
@@ -113,6 +125,7 @@ const challengeClientJS = `(() => {
     socket.onopen = () => {
       setStatus('Sessão conectada. Conclua somente a verificação apresentada pela fonte.');
       completeButton.disabled = false;
+      measureViewport();
       canvas.focus();
     };
     socket.onmessage = (event) => {
@@ -163,6 +176,7 @@ const challengeClientJS = `(() => {
     send({ type: 'keyUp', key: event.key, code: event.code, modifiers: (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0) });
   });
   canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+  new ResizeObserver(measureViewport).observe(viewport);
 
   completeButton.addEventListener('click', async () => {
     completeButton.disabled = true;
@@ -197,6 +211,10 @@ const challengeClientJS = `(() => {
     if (!response.ok) return;
     const state = await response.json();
     expiresAt = Date.parse(state.expires_at);
+    if (state.kind === 'login' && !document.body.dataset.finished) {
+      setStatus('Sessão conectada. Entre no site; seus dados permanecem somente no navegador remoto.');
+      completeButton.textContent = 'Confirmar login e continuar';
+    }
     if (state.status === 'cancelled' || state.status === 'expired') {
       document.body.dataset.finished = 'true';
       setStatus(state.status === 'expired' ? 'A sessão expirou.' : 'A sessão foi cancelada.');
@@ -260,7 +278,13 @@ func (h *ChallengeHandler) completeChallenge(w http.ResponseWriter, r *http.Requ
 	}
 	if snapshot.UserAction {
 		_ = h.cm.RejectVerification(token)
-		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusConflict, Title: "User Action Still Required", Detail: "The challenge is still visible in the browser session."})
+		detail := "The challenge is still visible in the browser session."
+		if snapshot.UserActionKind == browser.UserActionLogin {
+			detail = "The site still requires login. Complete authentication before continuing."
+		} else if snapshot.UserActionKind == browser.UserActionBlocked {
+			detail = "The source returned a definitive Cloudflare block, not an interactive challenge."
+		}
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusConflict, Title: "User Action Still Required", Detail: detail})
 		return
 	}
 	view, err := h.cm.Resolve(token)
