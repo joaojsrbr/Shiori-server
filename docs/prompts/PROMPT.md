@@ -56,9 +56,6 @@ O backend deverá oferecer:
   diretamente.
 - O domínio não importa HTTP, PostgreSQL, Redis/Valkey, S3, Playwright ou SDKs
   de IA.
-- Não implemente bypass de CAPTCHA, DRM, paywall, login ou controle de acesso.
-- Não use `cloudscraper` como mecanismo de evasão. Se uma fonte exigir um
-  desafio interativo, devolva `requires_user_action`.
 
 ## Stack e versões
 
@@ -86,7 +83,7 @@ implementação, registre-as e mantenha lockfiles.
 Implemente dois perfis explícitos atrás das mesmas interfaces:
 
 | Capacidade | Perfil `portable` | Perfil `docker` |
-|---|---|---|
+| --- | --- | --- |
 | Banco | SQLite | PostgreSQL |
 | Fila | SQLite durável | Valkey |
 | Assets | filesystem local | MinIO/S3 |

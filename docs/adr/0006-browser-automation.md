@@ -58,29 +58,3 @@ type BrowserProvider interface {
     IsAvailable() bool
 }
 ```
-
-### Detecção de Cloudflare e desafios
-
-O pipeline de aquisição segue a política em camadas:
-
-1. HTTP direto (sem navegador)
-2. Navegador headless com JavaScript
-3. Detecção de challenge/bloqueio
-4. Estado `requires_user_action` → handoff ao usuário
-5. Retomada após confirmação
-
-**Nunca implementar:**
-- Resolução automática de CAPTCHA
-- Fingerprint spoofing agressivo
-- Rotação de proxy para evasão
-- Tentativa infinita de challenge
-
-## Consequências
-
-- O portátil funciona sem Node.js — chromedp é Go puro.
-- Se não houver Chrome/Edge, o servidor funciona mas sem capability de
-  navegador (HTTP direto continua funcionando).
-- O Docker usa Playwright para melhor compatibilidade com JavaScript complexo.
-- A mesma interface de porta garante que o domínio funciona com ambos.
-- Cookies de sessão são criptografados em repouso e isolados por domínio.
-- Rate limit, backoff, jitter e circuit breaker são implementados por domínio.

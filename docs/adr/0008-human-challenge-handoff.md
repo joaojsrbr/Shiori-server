@@ -50,26 +50,3 @@ apresente instruções adequadas sem receber cookies, credenciais ou DOM interno
 O token funciona como uma capability secreta. Portanto, caminhos de challenge
 são redigidos nos logs, respostas não podem ser armazenadas em cache e a página
 usa CSP, `no-referrer`, `nosniff` e proteção contra framing externo.
-
-## Limites
-
-- Não resolve CAPTCHA automaticamente.
-- Não injeta respostas, não altera fingerprint e não oculta automação.
-- Não reutiliza o perfil pessoal do usuário nem lê/exporta valores brutos de
-  cookies ou senhas; a persistência ocorre dentro do perfil isolado do Chrome.
-- `login_url` não autoriza preenchimento automático nem envio de credenciais;
-  ela apenas direciona a janela controlada em que a pessoa autentica.
-- Não tenta transformar uma resposta Cloudflare `Block` em Challenge por
-  headers ou alteração de fingerprint; apenas challenges realmente emitidos
-  pela fonte podem ser concluídos pelo usuário.
-- O portátil atual é single-user. Isolamento adicional por identidade será
-  necessário antes de compartilhar uma instalação entre vários usuários.
-- O adapter Playwright do perfil Docker deverá implementar o mesmo contrato.
-
-## Referências
-
-- Chrome DevTools Protocol: `Page.startScreencast` e `Page.screencastFrame`.
-- Chrome DevTools Protocol: `Input.dispatchMouseEvent` e
-  `Input.dispatchKeyEvent`.
-- Gorilla WebSocket: política de origem e regra de um leitor/um escritor.
-- OWASP WebSocket Security Cheat Sheet.
