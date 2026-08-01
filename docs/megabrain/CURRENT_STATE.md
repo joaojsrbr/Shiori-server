@@ -34,6 +34,8 @@ Atualizado em: 2026-08-01
 - ADRs iniciais estão em `docs/adr/`.
 - A entrada do NuExtract3 usa metadados + Markdown, orçamento conservador da
   janela e chunks semânticos com limite rígido (ADR 0009).
+- O template NuExtract padrão é embutido no executável; o arquivo em `config/`
+  funciona como override opcional.
 - `/api/v1/debug/extract` reutiliza o mesmo pipeline do worker e só é registrado
   quando `--log-level debug` está ativo.
 

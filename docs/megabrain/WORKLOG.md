@@ -16,6 +16,16 @@ Adicione uma entrada por branch mesclada, da mais recente para a mais antiga.
 - Próximo passo:
 ```
 
+## 2026-08-01 — fix/debug-route-mount
+
+- Objetivo: corrigir o panic do Chi ao iniciar o executável com `--log-level debug`.
+- Resultado: rotas principais e opcionais são registradas em uma única montagem de `/api/v1`; o endpoint debug continua condicionado ao modo debug; o template NuExtract padrão foi embutido para o `.exe` funcionar sozinho.
+- Arquivos principais: `cmd/api/main.go`, `cmd/api/main_test.go`, `internal/extraction/nuextract/provider.go`, `internal/extraction/nuextract/default_templates.json`.
+- Contrato/migrations: sem alteração.
+- Verificações: teste de regressão para rotas core + debug, suíte Go, build e inicialização real do executável em debug.
+- Decisões/ADRs: sem nova decisão arquitetural.
+- Próximo passo: manter novas rotas opcionais dentro do mesmo subrouter versionado.
+
 ## 2026-08-01 — feature/semantic-context-pipeline
 
 - Objetivo: reduzir o contexto enviado ao NuExtract3 sem cortar estruturas úteis e simplificar o executável portátil.

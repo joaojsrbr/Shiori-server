@@ -2,6 +2,7 @@ package nuextract
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,9 @@ import (
 	"github.com/joaojsr/shiori-server/internal/extraction"
 	"github.com/joaojsr/shiori-server/internal/platform/ai/lmstudio"
 )
+
+//go:embed default_templates.json
+var embeddedTemplates []byte
 
 // AIClient defines the dependencies we need from an AI HTTP Client (like lmstudio.Client)
 type AIClient interface {
@@ -43,7 +47,10 @@ func New(client AIClient, modelName string, templatePath string, contextTokens, 
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading templates file: %w", err)
+		// A portable distribution contains only the executable. Keep an
+		// external file as an optional override, but always retain a usable
+		// default template inside the binary.
+		data = embeddedTemplates
 	}
 
 	var templates map[string]json.RawMessage

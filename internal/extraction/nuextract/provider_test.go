@@ -125,3 +125,23 @@ func TestProvider_Extract_InvalidJSON(t *testing.T) {
 		t.Errorf("expected ErrExtractionFailed, got %v", err)
 	}
 }
+
+func TestProvider_UsesEmbeddedTemplatesWhenExternalFileIsMissing(t *testing.T) {
+	mockClient := &MockAIClient{Response: `{"title":"Embedded"}`}
+	missingPath := filepath.Join(t.TempDir(), "missing-templates.json")
+	provider, err := nuextract.New(mockClient, "nuextract3@q4_k_m", missingPath, 8192, 12000)
+	if err != nil {
+		t.Fatalf("New() with embedded fallback returned error: %v", err)
+	}
+
+	result, err := provider.Extract(context.Background(), extraction.Request{
+		Content: "Example",
+		Target:  extraction.TargetManga,
+	})
+	if err != nil {
+		t.Fatalf("Extract() with embedded template returned error: %v", err)
+	}
+	if !strings.Contains(string(result.RawJSON), "Embedded") {
+		t.Fatalf("unexpected result: %s", result.RawJSON)
+	}
+}
