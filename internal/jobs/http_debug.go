@@ -139,14 +139,18 @@ func HandleDebugExtract(
 
 			if snap.UserAction {
 				token := cm.Create(navRes.SessionID)
+				challengeURL := "/api/v1/challenges/" + token
 				sendEvent("challenge", map[string]string{
-					"message":  "The page requires human interaction (captcha/cloudflare).",
-					"instance": fmt.Sprintf("http://localhost:9180/api/v1/challenges/%s", token),
+					"message":       "The page requires human interaction (captcha/cloudflare).",
+					"challenge_url": challengeURL,
+					"instance":      challengeURL,
 				})
 
-				if err := cm.Wait(ctx, token); err != nil {
+				waitErr := cm.Wait(ctx, token)
+				cm.Remove(token)
+				if waitErr != nil {
 					b.CloseSession(context.Background(), navRes.SessionID)
-					sendError("Challenge Failed", "Challenge resolution failed or timed out: "+err.Error())
+					sendError("Challenge Failed", "Challenge resolution failed or timed out: "+waitErr.Error())
 					return
 				}
 

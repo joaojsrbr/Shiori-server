@@ -191,17 +191,20 @@ func NewExtractHandler(
 
 			if snap.UserAction {
 				token := cm.Create(navRes.SessionID)
-				slog.Info("user action required, waiting for challenge resolution", "token", token, "url", fmt.Sprintf("/api/v1/challenges/%s", token))
+				challengeURL := "/api/v1/challenges/" + token
+				slog.Info("user action required, waiting for challenge resolution", "job_id", job.ID)
 
 				sendEvent("challenge", map[string]string{
-					"message":  "The page requires human interaction (captcha/cloudflare).",
-					"instance": fmt.Sprintf("http://localhost:9180/api/v1/challenges/%s", token),
+					"message":       "The page requires human interaction (captcha/cloudflare).",
+					"challenge_url": challengeURL,
+					"instance":      challengeURL,
 				})
 
-				// We block the worker here.
-				if err := cm.Wait(ctx, token); err != nil {
+				waitErr := cm.Wait(ctx, token)
+				cm.Remove(token)
+				if waitErr != nil {
 					b.CloseSession(context.Background(), navRes.SessionID)
-					return sendError("Challenge Failed", "Challenge resolution failed or timed out", err)
+					return sendError("Challenge Failed", "Challenge resolution failed or timed out", waitErr)
 				}
 
 				// Take snapshot again after challenge is solved

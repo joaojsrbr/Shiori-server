@@ -28,6 +28,9 @@ Atualizado em: 2026-07-30
   desafios Cloudflare visíveis para interação humana. Scripts Cloudflare em
   páginas normais não geram falso positivo, e desafios gerenciados recebem até
   10 segundos para concluir automaticamente antes do estado de ação humana.
+- Desafios interativos usam handoff temporário por screencast/WebSocket com
+  TTL, controlador único, validação de origem e de input, cancelamento e
+  verificação do DOM pelo backend antes da retomada (ADR 0008).
 - ADRs iniciais estão em `docs/adr/`.
 
 ## Artefatos locais

@@ -129,6 +129,66 @@ func TestProviderWaitsForAutomaticChallenge(t *testing.T) {
 	}
 }
 
+func TestProviderScreencastAcceptsKeyboardInput(t *testing.T) {
+	if os.Getenv("SHIORI_BROWSER_INTEGRATION_TEST") != "1" {
+		t.Skip("set SHIORI_BROWSER_INTEGRATION_TEST=1 to run with a local Chrome or Edge installation")
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<!doctype html><html><body>
+<label>Verification code <input autofocus oninput="document.querySelector('#output').textContent=this.value"></label>
+<output id="output"></output>
+</body></html>`)
+	}))
+	defer server.Close()
+
+	provider := New(t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	navigation, err := provider.Navigate(ctx, browser.NavigateRequest{URL: server.URL})
+	if err != nil {
+		t.Fatalf("Navigate() error = %v", err)
+	}
+	defer provider.CloseSession(context.Background(), navigation.SessionID)
+
+	streamCtx, stopStream := context.WithCancel(ctx)
+	frames := make(chan []byte, 2)
+	inputs := make(chan browser.InputEvent, 4)
+	streamDone := make(chan error, 1)
+	go func() {
+		streamDone <- provider.Screencast(streamCtx, navigation.SessionID, frames, inputs)
+	}()
+
+	select {
+	case frame := <-frames:
+		if len(frame) == 0 {
+			t.Fatal("Screencast() emitted an empty frame")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Screencast() did not emit a frame")
+	}
+
+	inputs <- browser.InputEvent{Type: "keyDown", Key: "a", Code: "KeyA", Text: "a"}
+	inputs <- browser.InputEvent{Type: "keyUp", Key: "a", Code: "KeyA"}
+	time.Sleep(250 * time.Millisecond)
+
+	snapshot, err := provider.Snapshot(ctx, navigation.SessionID)
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if !strings.Contains(snapshot.HTML, `<output id="output">a</output>`) {
+		t.Fatalf("keyboard input did not reach the page: %s", snapshot.HTML)
+	}
+
+	stopStream()
+	select {
+	case <-streamDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Screencast() did not stop after cancellation")
+	}
+}
+
 func TestRequiresUserAction(t *testing.T) {
 	tests := []struct {
 		name string

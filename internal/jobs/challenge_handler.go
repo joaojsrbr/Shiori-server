@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -12,12 +13,18 @@ import (
 	"github.com/joaojsr/shiori-server/internal/platform/httpserver"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all for now, since it can be opened from the frontend WebView
-	},
+const (
+	challengeReadLimit  = 4096
+	challengePongWait   = 45 * time.Second
+	challengePingPeriod = 20 * time.Second
+	challengeWriteWait  = 5 * time.Second
+)
+
+var challengeUpgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 64 * 1024,
+	// A nil CheckOrigin uses Gorilla's safe same-origin default.
+	EnableCompression: false,
 }
 
 type ChallengeHandler struct {
@@ -30,178 +37,349 @@ func NewChallengeHandler(bp browser.Provider, cm *browser.ChallengeManager) *Cha
 }
 
 func (h *ChallengeHandler) RegisterRoutes(r chi.Router) {
+	r.Get("/challenges/assets/client.js", h.serveClientJS)
 	r.Get("/challenges/{token}", h.serveHTML)
+	r.Get("/challenges/{token}/status", h.getStatus)
 	r.Get("/challenges/{token}/ws", h.serveWS)
 	r.Post("/challenges/{token}/complete", h.completeChallenge)
+	r.Delete("/challenges/{token}", h.cancelChallenge)
 }
 
-const screencastHTML = `<!DOCTYPE html>
-<html>
+const screencastHTML = `<!doctype html>
+<html lang="pt-BR">
 <head>
-    <title>Shiori - Human Verification</title>
-    <style>
-        body { margin: 0; padding: 0; background: #1a1b1e; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; color: white; }
-        #container { position: relative; display: inline-block; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border-radius: 8px; overflow: hidden; }
-        canvas { display: block; max-width: 100%; height: auto; }
-        #status { margin-bottom: 20px; font-weight: bold; }
-        .btn { margin-top: 20px; padding: 10px 20px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer; display: none; font-size: 16px; }
-        .btn:hover { background: #45a049; }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Shiori — verificação humana</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; background: #141518; color: #f4f4f5; display: grid; grid-template-rows: auto 1fr auto; }
+    header, footer { padding: 12px 16px; background: #1d1f24; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+    #status { margin: 0; font-weight: 650; }
+    #timer { color: #c5c7ce; font-variant-numeric: tabular-nums; }
+    main { min-height: 0; display: grid; place-items: center; padding: 12px; overflow: auto; }
+    canvas { display: block; max-width: 100%; height: auto; background: white; border: 1px solid #42454d; border-radius: 8px; outline: none; touch-action: none; }
+    canvas:focus-visible { box-shadow: 0 0 0 3px #8ab4ff; }
+    footer { display: flex; justify-content: flex-end; gap: 8px; }
+    button { border: 0; border-radius: 6px; padding: 10px 16px; font: inherit; font-weight: 650; cursor: pointer; }
+    #cancel { background: #353840; color: #fff; }
+    #complete { background: #8ab4ff; color: #101114; }
+    button:disabled { opacity: .55; cursor: wait; }
+  </style>
+  <script src="/api/v1/challenges/assets/client.js" defer></script>
 </head>
 <body>
-    <div id="status">Connecting to browser session...</div>
-    <div id="container">
-        <canvas id="screencast"></canvas>
-    </div>
-    <button id="doneBtn" class="btn" onclick="complete()">I have completed the challenge</button>
-
-    <script>
-        const token = window.location.pathname.split('/').pop();
-        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = wsProto + '//' + window.location.host + '/api/v1/challenges/' + token + '/ws';
-        const ws = new WebSocket(wsUrl);
-        
-        const canvas = document.getElementById('screencast');
-        const ctx = canvas.getContext('2d');
-        const status = document.getElementById('status');
-        const doneBtn = document.getElementById('doneBtn');
-
-        let img = new Image();
-        img.onload = () => {
-            if (canvas.width !== img.width) canvas.width = img.width;
-            if (canvas.height !== img.height) canvas.height = img.height;
-            ctx.drawImage(img, 0, 0);
-        };
-
-        ws.onopen = () => {
-            status.innerText = 'Connected. Please solve the challenge below.';
-            doneBtn.style.display = 'block';
-        };
-        ws.onclose = () => {
-            status.innerText = 'Session closed or expired.';
-            canvas.style.display = 'none';
-        };
-        ws.onmessage = (event) => {
-            const blob = event.data;
-            const url = URL.createObjectURL(blob);
-            img.src = url;
-            // Note: In a real app we'd revokeObjectURL to prevent memory leaks, 
-            // but for a 1-minute challenge this is fine.
-        };
-
-        function sendEvent(type, e) {
-            if (ws.readyState !== WebSocket.OPEN) return;
-            const rect = canvas.getBoundingClientRect();
-            // Calculate scale in case canvas is resized by CSS
-            const scaleX = canvas.width / rect.width;
-            const scaleY = canvas.height / rect.height;
-            
-            const x = Math.round((e.clientX - rect.left) * scaleX);
-            const y = Math.round((e.clientY - rect.top) * scaleY);
-            
-            let button = 'none';
-            if (e.button === 0) button = 'left';
-            else if (e.button === 2) button = 'right';
-
-            ws.send(JSON.stringify({ type: type, x: x, y: y, button: button }));
-        }
-
-        canvas.addEventListener('mousedown', (e) => sendEvent('mousePressed', e));
-        canvas.addEventListener('mouseup', (e) => sendEvent('mouseReleased', e));
-        canvas.addEventListener('mousemove', (e) => sendEvent('mouseMoved', e));
-        
-        // Prevent context menu on right click
-        canvas.addEventListener('contextmenu', e => e.preventDefault());
-
-        function complete() {
-            fetch('/api/v1/challenges/' + token + '/complete', { method: 'POST' })
-                .then(() => {
-                    status.innerText = 'Challenge marked as complete! You can close this view.';
-                    doneBtn.style.display = 'none';
-                    canvas.style.display = 'none';
-                    ws.close();
-                });
-        }
-    </script>
+  <header><p id="status" role="status" aria-live="polite">Conectando à sessão segura…</p><span id="timer"></span></header>
+  <main><canvas id="screencast" tabindex="0" aria-label="Navegador remoto para concluir a verificação"></canvas></main>
+  <footer><button id="cancel" type="button">Cancelar</button><button id="complete" type="button" disabled>Verificar e continuar</button></footer>
 </body>
 </html>`
 
+const challengeClientJS = `(() => {
+  'use strict';
+  const parts = location.pathname.split('/').filter(Boolean);
+  const token = parts[parts.length - 1];
+  const base = '/api/v1/challenges/' + encodeURIComponent(token);
+  const canvas = document.getElementById('screencast');
+  const context = canvas.getContext('2d');
+  const status = document.getElementById('status');
+  const timer = document.getElementById('timer');
+  const completeButton = document.getElementById('complete');
+  const cancelButton = document.getElementById('cancel');
+  let socket;
+  let imageURL;
+  let expiresAt;
+  let movePending = false;
+  let lastMove;
+
+  const setStatus = (message) => { status.textContent = message; };
+  const send = (payload) => {
+    if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
+  };
+  const coordinates = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: Math.round((event.clientX - rect.left) * canvas.width / rect.width),
+      y: Math.round((event.clientY - rect.top) * canvas.height / rect.height)
+    };
+  };
+  const buttonName = (button) => button === 0 ? 'left' : button === 1 ? 'middle' : button === 2 ? 'right' : 'none';
+
+  const connect = () => {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    socket = new WebSocket(protocol + '//' + location.host + base + '/ws');
+    socket.binaryType = 'blob';
+    socket.onopen = () => {
+      setStatus('Sessão conectada. Conclua somente a verificação apresentada pela fonte.');
+      completeButton.disabled = false;
+      canvas.focus();
+    };
+    socket.onmessage = (event) => {
+      if (!(event.data instanceof Blob)) return;
+      const nextURL = URL.createObjectURL(event.data);
+      const image = new Image();
+      image.onload = () => {
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        context.drawImage(image, 0, 0);
+        if (imageURL) URL.revokeObjectURL(imageURL);
+        imageURL = nextURL;
+      };
+      image.onerror = () => URL.revokeObjectURL(nextURL);
+      image.src = nextURL;
+    };
+    socket.onclose = () => {
+      completeButton.disabled = true;
+      if (!document.body.dataset.finished) setStatus('Conexão encerrada. Reabra esta página para reconectar.');
+    };
+  };
+
+  canvas.addEventListener('pointerdown', (event) => {
+    canvas.setPointerCapture(event.pointerId);
+    canvas.focus();
+    send({ type: 'mousePressed', ...coordinates(event), button: buttonName(event.button) });
+  });
+  canvas.addEventListener('pointerup', (event) => send({ type: 'mouseReleased', ...coordinates(event), button: buttonName(event.button) }));
+  canvas.addEventListener('pointermove', (event) => {
+    lastMove = event;
+    if (movePending) return;
+    movePending = true;
+    requestAnimationFrame(() => {
+      movePending = false;
+      if (lastMove) send({ type: 'mouseMoved', ...coordinates(lastMove), button: 'none' });
+    });
+  });
+  canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    send({ type: 'mouseWheel', ...coordinates(event), button: 'none', delta_x: event.deltaX, delta_y: event.deltaY });
+  }, { passive: false });
+  canvas.addEventListener('keydown', (event) => {
+    event.preventDefault();
+    send({ type: 'keyDown', key: event.key, code: event.code, text: event.key.length === 1 ? event.key : '', modifiers: (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0) });
+  });
+  canvas.addEventListener('keyup', (event) => {
+    event.preventDefault();
+    send({ type: 'keyUp', key: event.key, code: event.code, modifiers: (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0) });
+  });
+  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+
+  completeButton.addEventListener('click', async () => {
+    completeButton.disabled = true;
+    setStatus('O backend está verificando se o desafio terminou…');
+    const response = await fetch(base + '/complete', { method: 'POST', headers: { 'Accept': 'application/json' } });
+    if (!response.ok) {
+      const problem = await response.json().catch(() => ({}));
+      setStatus(problem.detail || 'O desafio ainda está visível. Conclua-o antes de continuar.');
+      completeButton.disabled = false;
+      canvas.focus();
+      return;
+    }
+    document.body.dataset.finished = 'true';
+    setStatus('Verificação confirmada pelo backend. A extração será retomada.');
+    completeButton.hidden = true;
+    cancelButton.hidden = true;
+    if (socket) socket.close(1000, 'completed');
+  });
+
+  cancelButton.addEventListener('click', async () => {
+    cancelButton.disabled = true;
+    await fetch(base, { method: 'DELETE' });
+    document.body.dataset.finished = 'true';
+    setStatus('Verificação cancelada.');
+    completeButton.hidden = true;
+    cancelButton.hidden = true;
+    if (socket) socket.close(1000, 'cancelled');
+  });
+
+  const updateStatus = async () => {
+    const response = await fetch(base + '/status', { headers: { 'Accept': 'application/json' } });
+    if (!response.ok) return;
+    const state = await response.json();
+    expiresAt = Date.parse(state.expires_at);
+    if (state.status === 'cancelled' || state.status === 'expired') {
+      document.body.dataset.finished = 'true';
+      setStatus(state.status === 'expired' ? 'A sessão expirou.' : 'A sessão foi cancelada.');
+      completeButton.hidden = true;
+      cancelButton.hidden = true;
+      if (socket) socket.close();
+    }
+  };
+  setInterval(() => {
+    if (!expiresAt) return;
+    const seconds = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+    timer.textContent = 'Expira em ' + Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+  }, 250);
+  setInterval(updateStatus, 5000);
+  updateStatus();
+  connect();
+})();`
+
 func (h *ChallengeHandler) serveHTML(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
-	if _, err := h.cm.GetSession(token); err != nil {
-		httpserver.RespondError(w, httpserver.Problem{Status: 404, Title: "Challenge Not Found"})
+	if _, err := h.cm.Get(token); err != nil {
+		respondChallengeError(w, err)
 		return
 	}
+	setChallengeHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(screencastHTML))
+	_, _ = w.Write([]byte(screencastHTML))
+}
+
+func (h *ChallengeHandler) serveClientJS(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write([]byte(challengeClientJS))
+}
+
+func (h *ChallengeHandler) getStatus(w http.ResponseWriter, r *http.Request) {
+	view, err := h.cm.Get(chi.URLParam(r, "token"))
+	if err != nil && !errors.Is(err, browser.ErrChallengeExpired) {
+		respondChallengeError(w, err)
+		return
+	}
+	httpserver.RespondJSON(w, http.StatusOK, view)
 }
 
 func (h *ChallengeHandler) completeChallenge(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
-	if _, err := h.cm.GetSession(token); err != nil {
-		httpserver.RespondError(w, httpserver.Problem{Status: 404, Title: "Challenge Not Found"})
+	sessionID, err := h.cm.BeginVerification(token)
+	if err != nil {
+		respondChallengeError(w, err)
 		return
 	}
-	h.cm.Resolve(token)
-	w.WriteHeader(http.StatusOK)
+
+	verifyCtx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	snapshot, err := h.bp.Snapshot(verifyCtx, sessionID)
+	if err != nil {
+		_ = h.cm.RejectVerification(token)
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusBadGateway, Title: "Challenge Verification Failed", Detail: "The browser session could not be verified."})
+		return
+	}
+	if snapshot.UserAction {
+		_ = h.cm.RejectVerification(token)
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusConflict, Title: "User Action Still Required", Detail: "The challenge is still visible in the browser session."})
+		return
+	}
+	view, err := h.cm.Resolve(token)
+	if err != nil {
+		respondChallengeError(w, err)
+		return
+	}
+	httpserver.RespondJSON(w, http.StatusOK, view)
+}
+
+func (h *ChallengeHandler) cancelChallenge(w http.ResponseWriter, r *http.Request) {
+	if err := h.cm.Cancel(chi.URLParam(r, "token")); err != nil {
+		respondChallengeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *ChallengeHandler) serveWS(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
-	sessionID, err := h.cm.GetSession(token)
+	sessionID, err := h.cm.AcquireController(token)
 	if err != nil {
-		httpserver.RespondError(w, httpserver.Problem{Status: 404, Title: "Challenge Not Found"})
+		respondChallengeError(w, err)
 		return
 	}
+	defer h.cm.ReleaseController(token)
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := challengeUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		return // Upgrade writes the error itself
+		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(challengeReadLimit)
+	_ = conn.SetReadDeadline(time.Now().Add(challengePongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(challengePongWait))
+	})
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	frames := make(chan []byte, 2)
+	inputEvents := make(chan browser.InputEvent, 64)
 
-	frames := make(chan []byte)
-	input := make(chan browser.InputEvent)
-
-	// Start screencast provider loop
 	go func() {
-		// Stop if Screencast exits
 		defer cancel()
-		_ = h.bp.Screencast(ctx, sessionID, frames, input)
+		_ = h.bp.Screencast(ctx, sessionID, frames, inputEvents)
 	}()
 
-	// Write frames to WS
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case f := <-frames:
-				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-				if err := conn.WriteMessage(websocket.BinaryMessage, f); err != nil {
-					cancel()
-					return
-				}
-			}
-		}
-	}()
+	go writeChallengeStream(ctx, cancel, conn, frames)
 
-	// Read input from WS
+	windowStarted := time.Now()
+	eventCount := 0
 	for {
-		_, msg, err := conn.ReadMessage()
+		_, message, err := conn.ReadMessage()
 		if err != nil {
-			break
+			return
 		}
-		var ev browser.InputEvent
-		if err := json.Unmarshal(msg, &ev); err == nil {
-			select {
-			case <-ctx.Done():
+		if time.Since(windowStarted) >= time.Second {
+			windowStarted = time.Now()
+			eventCount = 0
+		}
+		eventCount++
+		if eventCount > 180 {
+			continue
+		}
+		var event browser.InputEvent
+		if err := json.Unmarshal(message, &event); err != nil || !event.Valid() {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case inputEvents <- event:
+		}
+	}
+}
+
+func writeChallengeStream(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, frames <-chan []byte) {
+	ticker := time.NewTicker(challengePingPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case frame := <-frames:
+			_ = conn.SetWriteDeadline(time.Now().Add(challengeWriteWait))
+			if err := conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+				cancel()
 				return
-			case input <- ev:
+			}
+		case <-ticker.C:
+			_ = conn.SetWriteDeadline(time.Now().Add(challengeWriteWait))
+			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				cancel()
+				return
 			}
 		}
+	}
+}
+
+func setChallengeHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src blob: data:; frame-ancestors 'self'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+}
+
+func respondChallengeError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, browser.ErrChallengeNotFound):
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusNotFound, Title: "Challenge Not Found", Detail: "The challenge token does not exist."})
+	case errors.Is(err, browser.ErrChallengeExpired):
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusGone, Title: "Challenge Expired", Detail: "The human verification session has expired."})
+	case errors.Is(err, browser.ErrChallengeInUse):
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusConflict, Title: "Challenge In Use", Detail: "Another controller is already connected to this challenge."})
+	case errors.Is(err, browser.ErrChallengeCancelled):
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusGone, Title: "Challenge Cancelled", Detail: "The human verification session was cancelled."})
+	default:
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusConflict, Title: "Invalid Challenge State", Detail: "The challenge cannot perform this operation in its current state."})
 	}
 }
