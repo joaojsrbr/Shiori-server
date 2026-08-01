@@ -54,10 +54,15 @@ chunk tem teto adicional de `12000` bytes. Ambos os limites são configuráveis.
 
 ```text
 URL original
-  -> challenge/login detectado
+  -> login explícito (opcional) ou challenge/login detectado
   -> handoff humano no mesmo Chromium
   -> confirmação por snapshot
   -> fechamento gracioso e persistência do perfil por hostname
   -> reabertura obrigatória da URL original
   -> ainda bloqueado/login? falhar; caso contrário, extrair
 ```
+
+O contrato `POST /api/v1/jobs/extract` permite `requires_login: true` junto de
+`login_url`. O adapter usa `ProfileURL` internamente para manter login e fonte
+no mesmo perfil persistente, inclusive quando a página de autenticação está em
+outro hostname. Nenhuma credencial ou cookie cru atravessa a API.

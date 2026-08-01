@@ -15,7 +15,8 @@ import (
 
 // mockQueueProvider provides a dummy implementation of queue.Provider
 type mockQueueProvider struct {
-	Enqueued bool
+	Enqueued    bool
+	EnqueuedJob *queue.Job
 }
 
 func TestDebugExtractRouteRegistration(t *testing.T) {
@@ -49,6 +50,7 @@ func TestDebugExtractRouteRegistration(t *testing.T) {
 
 func (m *mockQueueProvider) Enqueue(ctx context.Context, job *queue.Job) error {
 	m.Enqueued = true
+	m.EnqueuedJob = job
 	return nil
 }
 func (m *mockQueueProvider) Dequeue(ctx context.Context, types []string) (*queue.Job, error) {
@@ -102,5 +104,32 @@ func TestEnqueueExtract_Invalid(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 Bad Request, got %d", rr.Code)
+	}
+}
+
+func TestEnqueueExtractValidatesExplicitLogin(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want int
+	}{
+		{name: "valid login hint", body: `{"url":"https://reader.example.test/work/1","target":"media","requires_login":true,"login_url":"https://auth.example.test/login"}`, want: http.StatusAccepted},
+		{name: "missing login URL", body: `{"url":"https://reader.example.test/work/1","target":"media","requires_login":true}`, want: http.StatusBadRequest},
+		{name: "unexpected login URL", body: `{"url":"https://reader.example.test/work/1","target":"media","login_url":"https://auth.example.test/login"}`, want: http.StatusBadRequest},
+		{name: "non HTTP login URL", body: `{"url":"https://reader.example.test/work/1","target":"media","requires_login":true,"login_url":"file:///secret"}`, want: http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := &mockQueueProvider{}
+			router := chi.NewRouter()
+			jobs.NewHandler(q, nil).RegisterRoutes(router)
+			request := httptest.NewRequest(http.MethodPost, "/jobs/extract", bytes.NewBufferString(tt.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != tt.want {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, tt.want, response.Body.String())
+			}
+		})
 	}
 }

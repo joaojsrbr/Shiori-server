@@ -35,7 +35,10 @@ Atualizado em: 2026-08-01
   (ADR 0008). No portátil single-user, perfis Chromium persistentes e
   serializados por hostname mantêm cookies legítimos sem expô-los ao backend.
   Formulários/redirecionamentos de login usam o mesmo handoff e a URL original
-  é reaberta depois da autenticação antes de qualquer extração.
+  é reaberta depois da autenticação antes de qualquer extração. Pedidos de
+  extração também aceitam `requires_login` + `login_url` para fontes com login
+  não convencional; a autenticação continua no perfil da fonte mesmo quando o
+  provedor de identidade usa outro host.
 - ADRs iniciais estão em `docs/adr/`.
 - A entrada do NuExtract3 usa metadados + Markdown, orçamento conservador da
   janela e chunks semânticos com limite rígido (ADR 0009).

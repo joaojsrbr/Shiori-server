@@ -282,6 +282,12 @@ func TestClassifyUserAction(t *testing.T) {
 			want:      browser.UserActionLogin,
 		},
 		{
+			name:      "framework session route",
+			page:      renderedPage{FinalURL: "https://example.com/users/sessions/new"},
+			requested: "https://example.com/chapter/1",
+			want:      browser.UserActionLogin,
+		},
+		{
 			name:      "definitive cloudflare block",
 			page:      renderedPage{FinalURL: "https://example.com/chapter/1", BodyText: "Why have I been blocked? Cloudflare Ray ID"},
 			requested: "https://example.com/chapter/1",
