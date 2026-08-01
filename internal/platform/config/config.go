@@ -47,7 +47,7 @@ type AIConfig struct {
 	ModelQuality     string
 	TemplatePath     string
 	MaxContextLength int // n_ctx when loading model (tokens)
-	MaxContentBytes  int // max bytes of distilled content sent to LLM
+	MaxContentBytes  int // hard byte limit for each semantic chunk sent to the LLM
 }
 
 type PostgresConfig struct {
@@ -93,7 +93,7 @@ func Defaults() Config {
 		Profile: ProfilePortable,
 		Server: ServerConfig{
 			Host:            "127.0.0.1",
-			Port:            9180,
+			Port:            8080,
 			ReadTimeout:     30 * time.Second,
 			WriteTimeout:    30 * time.Minute, // Allow long SSE and AI inference
 			IdleTimeout:     120 * time.Second,
@@ -122,8 +122,8 @@ func Defaults() Config {
 			ModelDefault:     "nuextract3@q4_k_m",
 			ModelQuality:     "nuextract3@q5_k_m",
 			TemplatePath:     "config/nuextract_templates.json",
-			MaxContextLength: 65536,
-			MaxContentBytes:  40000, // ~10k tokens, deixa margem para o template e resposta
+			MaxContextLength: 8192,
+			MaxContentBytes:  12000,
 		},
 	}
 }
@@ -209,6 +209,12 @@ func Load(flags Flags) (Config, error) {
 	}
 	if v := envOr("SHIORI_MODEL_EXTRACT_QUALITY", ""); v != "" {
 		cfg.AI.ModelQuality = v
+	}
+	if v := envInt("SHIORI_AI_MAX_CONTEXT_LENGTH", 0); v > 0 {
+		cfg.AI.MaxContextLength = v
+	}
+	if v := envInt("SHIORI_AI_MAX_CONTENT_BYTES", 0); v > 0 {
+		cfg.AI.MaxContentBytes = v
 	}
 
 	if flags.LogLevel != "" {

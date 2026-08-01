@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "9180:9180"
+      - "8080:8080"
     environment:
       - SHIORI_PROFILE=docker
       - SHIORI_POSTGRES_URL=postgres://shiori:shiori_pass@postgres:5432/shiori?sslmode=disable

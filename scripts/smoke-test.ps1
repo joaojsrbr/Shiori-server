@@ -34,7 +34,7 @@ if ($VersionOutput -notmatch "shiori-server") {
 }
 
 Write-Host "Starting server..." -ForegroundColor Cyan
-$ServerProcess = Start-Process -FilePath $TestExe -ArgumentList "serve --profile portable --log-format text" -WorkingDirectory $TempDir -PassThru -WindowStyle Hidden
+$ServerProcess = Start-Process -FilePath $TestExe -ArgumentList "serve --profile portable --port 8080 --log-level info --log-format text" -WorkingDirectory $TempDir -PassThru -WindowStyle Hidden
 
 # Give it a few seconds to start and run migrations
 Start-Sleep -Seconds 3
@@ -45,16 +45,26 @@ try {
     }
 
     Write-Host "Testing /health/live..." -ForegroundColor Cyan
-    $Live = Invoke-RestMethod -Uri "http://127.0.0.1:9180/health/live"
+    $Live = Invoke-RestMethod -Uri "http://127.0.0.1:8080/health/live"
     if ($Live.status -ne "alive") { Write-Error "Live check failed." }
 
     Write-Host "Testing /health/ready..." -ForegroundColor Cyan
-    $Ready = Invoke-RestMethod -Uri "http://127.0.0.1:9180/health/ready"
+    $Ready = Invoke-RestMethod -Uri "http://127.0.0.1:8080/health/ready"
     if ($Ready.status -ne "ready") { Write-Error "Ready check failed." }
 
     Write-Host "Testing /api/v1/capabilities..." -ForegroundColor Cyan
-    $Caps = Invoke-RestMethod -Uri "http://127.0.0.1:9180/api/v1/capabilities"
+    $Caps = Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/v1/capabilities"
     if ($Caps.profile -ne "portable") { Write-Error "Profile should be portable." }
+
+    Write-Host "Testing that debug endpoint is disabled in info mode..." -ForegroundColor Cyan
+    try {
+        Invoke-WebRequest -Uri "http://127.0.0.1:8080/api/v1/debug/extract" -Method Post -ContentType "application/json" -Body '{}' -ErrorAction Stop | Out-Null
+        Write-Error "Debug endpoint must not be registered in info mode."
+    } catch {
+        if ($_.Exception.Response.StatusCode.value__ -ne 404) {
+            throw
+        }
+    }
     
     # Check if DB was created
     $DbPath = Join-Path -Path $TempDir -ChildPath "data\shiori.db"

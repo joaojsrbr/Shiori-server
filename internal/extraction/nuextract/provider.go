@@ -23,10 +23,11 @@ type Provider struct {
 	modelName       string
 	templates       map[string]json.RawMessage
 	maxContentBytes int
+	contextTokens   int
 }
 
 // New Creates a new NuExtract provider.
-func New(client AIClient, modelName string, templatePath string, maxContentBytes int) (*Provider, error) {
+func New(client AIClient, modelName string, templatePath string, contextTokens, maxContentBytes int) (*Provider, error) {
 	data, err := os.ReadFile(templatePath)
 	if err != nil {
 		// Fallback: try relative to the executable path (useful when double-clicking .exe or running from bin/)
@@ -55,6 +56,7 @@ func New(client AIClient, modelName string, templatePath string, maxContentBytes
 		modelName:       modelName,
 		templates:       templates,
 		maxContentBytes: maxContentBytes,
+		contextTokens:   contextTokens,
 	}, nil
 }
 
@@ -67,30 +69,6 @@ func (p *Provider) getTemplateForTarget(target extraction.TargetType) (string, e
 	return string(tmpl), nil
 }
 
-// splitIntoChunks splits content by lines into chunks up to maxSize bytes.
-func splitIntoChunks(content string, maxSize int) []string {
-	if len(content) <= maxSize || maxSize <= 0 {
-		return []string{content}
-	}
-	var chunks []string
-	lines := strings.Split(content, "\n")
-	var currentChunk strings.Builder
-
-	for _, line := range lines {
-		// If a single line is larger than maxSize, we still have to add it.
-		if currentChunk.Len()+len(line)+1 > maxSize && currentChunk.Len() > 0 {
-			chunks = append(chunks, currentChunk.String())
-			currentChunk.Reset()
-		}
-		currentChunk.WriteString(line)
-		currentChunk.WriteString("\n")
-	}
-	if currentChunk.Len() > 0 {
-		chunks = append(chunks, currentChunk.String())
-	}
-	return chunks
-}
-
 // Extract invokes NuExtract logic via inference.
 func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extraction.Result, error) {
 	schema, err := p.getTemplateForTarget(req.Target)
@@ -98,13 +76,8 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 		return nil, fmt.Errorf("getting schema: %w", err)
 	}
 
-	// For chunking, we limit each chunk to ~20000 bytes (approx 5k tokens),
-	// leaving plenty of room for 16k context models.
-	chunkSize := 20000
-	if p.maxContentBytes > 0 && p.maxContentBytes < chunkSize {
-		chunkSize = p.maxContentBytes
-	}
-	chunks := splitIntoChunks(req.Content, chunkSize)
+	chunkSize, outputTokens := contextBudget(p.contextTokens, p.maxContentBytes, len(schema))
+	chunks := splitSemanticMarkdown(req.Content, chunkSize)
 
 	var baseJSON map[string]interface{}
 	var allWarnings []string
@@ -114,7 +87,9 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 		if req.OnProgress != nil {
 			req.OnProgress(fmt.Sprintf("Running AI extraction (chunk %d of %d)...", i+1, len(chunks)))
 		}
-
+		// LM Studio's OpenAI-compatible endpoint does not expose NuExtract3's
+		// vLLM-only chat_template_kwargs, so serialize the two model inputs in
+		// the GGUF prompt format while budgeting both above.
 		prompt := fmt.Sprintf("<|input|>\n%s\n<|template|>\n%s", chunk, schema)
 
 		inferReq := lmstudio.InferRequest{
@@ -125,8 +100,8 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 					Content: prompt,
 				},
 			},
-			Temperature: 0.0,
-			MaxTokens:   16384,
+			Temperature: 0.2,
+			MaxTokens:   outputTokens,
 		}
 
 		inferOutput, err := p.client.Infer(ctx, inferReq)
@@ -169,6 +144,9 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 				}
 			}
 		}
+	}
+	if len(chunks) > 1 {
+		allWarnings = append(allWarnings, fmt.Sprintf("content processed in %d semantic chunks", len(chunks)))
 	}
 
 	finalBytes, _ := json.MarshalIndent(baseJSON, "", "  ")

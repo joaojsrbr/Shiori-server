@@ -15,6 +15,9 @@ Iniciar o desenvolvimento do Frontend (Flutter). O Backend atingiu maturidade de
 - Não versionar `dist/shiori-server.exe`.
 - Confirmar compatibilidade da versão Go declarada com o ambiente.
 - PostgreSQL/Valkey/MinIO ainda pertencem ao perfil Docker.
+- Ao mudar a janela carregada no LM Studio, alinhar
+  `SHIORI_AI_MAX_CONTEXT_LENGTH`; o padrão é `8192`.
+- A rota `/api/v1/debug/extract` retorna 404 fora de `--log-level debug`.
 - O frontend deve resolver `challenge_url` relativo à URL do backend, abrir a
   página temporária e acompanhar `GET /api/v1/challenges/{token}/status`; não
   deve acessar cookies ou CDP diretamente.

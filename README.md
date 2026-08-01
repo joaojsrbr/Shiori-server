@@ -19,7 +19,7 @@ O backend segue um modelo de API HTTP + Background Workers para tarefas longas.
 *   **Extração e IA (`internal/extraction` & `internal/platform/ai/lmstudio`):**
     Responsável por formatar os *prompts* e se comunicar com a LLM para converter HTML destilado (Markdown) em JSON estruturado.
 *   **Browser e Desafios (`internal/platform/browser`):**
-    Utiliza ChromeDP para navegar nas páginas e contornar desafios (ex: Cloudflare Turnstile). Caso seja detectado um CAPTCHA irresolvível automaticamente, a aplicação emite um evento "challenge" no SSE e expõe um WebSocket Proxy temporário (`/api/v1/challenges/{token}`) para o usuário resolver o desafio manualmente através da UI.
+    Utiliza ChromeDP para navegar nas páginas. Quando Cloudflare, CAPTCHA ou login exigem interação, a aplicação emite um evento `challenge` no SSE e oferece um handoff temporário para o usuário concluir a ação manualmente.
 
 ## Endpoints Principais
 
@@ -27,14 +27,14 @@ O backend segue um modelo de API HTTP + Background Workers para tarefas longas.
 | :--- | :--- | :--- |
 | `POST` | `/api/v1/jobs/extract` | Enfileira uma URL para ser extraída em background. Retorna um `job_id`. |
 | `GET`  | `/api/v1/jobs/{job_id}/events` | SSE: Conexão persistente para receber logs em tempo real sobre o progresso do job. |
-| `POST` | `/api/v1/debug/extract` | Rota para ambiente de desenvolvimento. Funciona igual ao fluxo do job, porém o request fica preso (bloqueante) disparando SSE direto na resposta. Retorna a extração imediatamente ao finalizar. |
+| `POST` | `/api/v1/debug/extract` | Rota SSE síncrona, registrada exclusivamente com `--log-level debug`. |
 | `GET`  | `/api/v1/capabilities` | Retorna o status de conexão dos drivers (Banco de Dados, LMStudio, Navegador, Fila). |
 
 ## Como Executar
 
 ### Pré-requisitos
 1. Go 1.22+
-2. LM Studio rodando localmente (preferencialmente um modelo com janela de contexto maior, ex: `65536`).
+2. LM Studio rodando localmente, com `SHIORI_AI_MAX_CONTEXT_LENGTH` igual à janela realmente carregada (padrão: `8192`).
 3. Google Chrome instalado no sistema (para o ChromeDP).
 
 ### Passos
@@ -51,4 +51,4 @@ O backend segue um modelo de API HTTP + Background Workers para tarefas longas.
    go run ./cmd/api
    ```
 
-A API subirá em `http://localhost:9180`.
+A API subirá em `http://localhost:8080`.
