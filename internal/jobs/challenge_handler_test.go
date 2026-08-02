@@ -114,7 +114,7 @@ func TestChallengeWebSocketRejectsCrossOrigin(t *testing.T) {
 	token := manager.Create("session-1")
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/challenges/"+token+"/ws", nil)
-	request.Host = "127.0.0.1:9180"
+	request.Host = "127.0.0.1:8080"
 	request.Header.Set("Origin", "https://attacker.example")
 	request.Header.Set("Connection", "Upgrade")
 	request.Header.Set("Upgrade", "websocket")

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${SHIORI_BASE_URL:-http://127.0.0.1:9180}"
+BASE_URL="${SHIORI_BASE_URL:-http://127.0.0.1:8080}"
 SOURCE_URL="https://lycantoons.com/series/defensor-da-dungeon"
 MAX_SECONDS="${SHIORI_TEST_TIMEOUT:-1800}"
 
