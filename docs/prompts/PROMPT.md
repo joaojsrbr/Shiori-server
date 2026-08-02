@@ -410,6 +410,7 @@ GET    /api/v1/capabilities
 GET    /api/v1/media
 POST   /api/v1/media
 GET    /api/v1/media/{mediaId}
+DELETE /api/v1/media/{mediaId}
 GET    /api/v1/media/{mediaId}/chapters
 POST   /api/v1/sources/analyze
 POST   /api/v1/sources/{sourceId}/index

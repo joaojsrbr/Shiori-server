@@ -66,6 +66,7 @@ type MediaRepository interface {
 	Create(ctx context.Context, req MediaCreateRequest) (*Media, error)
 	GetByID(ctx context.Context, id string) (*Media, error)
 	List(ctx context.Context) ([]*Media, error)
+	Delete(ctx context.Context, id string) (storageKeys []string, deleted bool, err error)
 }
 
 type MediaPageRepository interface {

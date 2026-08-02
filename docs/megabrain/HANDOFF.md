@@ -21,4 +21,7 @@ Iniciar o desenvolvimento do Frontend (Flutter). O Backend atingiu maturidade de
 - O frontend deve resolver `challenge_url` relativo à URL do backend, abrir a
   página temporária e acompanhar `GET /api/v1/challenges/{token}/status`; não
   deve acessar cookies ou CDP diretamente.
+- O frontend pode excluir uma obra com `DELETE /api/v1/media/{mediaId}`. A
+  operação é destrutiva e também remove unidades, progresso, vínculos e imagens
+  locais; deve exigir confirmação explícita.
 

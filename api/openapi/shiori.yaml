@@ -137,6 +137,26 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+    delete:
+      summary: Delete a media item and its chapters, history, collection links, and stored images
+      operationId: deleteMedia
+      tags:
+        - Library
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Media deleted
+        '404':
+          description: Media not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /api/v1/media/{mediaId}/chapters:
     get:
