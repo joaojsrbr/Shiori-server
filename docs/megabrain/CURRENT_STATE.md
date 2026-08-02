@@ -1,6 +1,6 @@
 # Estado atual
 
-Atualizado em: 2026-08-01
+Atualizado em: 2026-08-02
 
 ## Repositório
 
@@ -46,6 +46,9 @@ Atualizado em: 2026-08-01
   funciona como override opcional.
 - `/api/v1/debug/extract` reutiliza o mesmo pipeline do worker e só é registrado
   quando `--log-level debug` está ativo.
+- `DELETE /api/v1/media/{mediaId}` remove a obra e, por cascata, capítulos,
+  histórico e associações com coleções; as chaves das imagens são coletadas
+  antes da transação e removidas do storage após o commit.
 
 ## Artefatos locais
 

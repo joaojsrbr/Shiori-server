@@ -44,6 +44,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/media", h.ListMedia)
 	r.Post("/media", h.CreateMedia)
 	r.Get("/media/{mediaId}", h.GetMedia)
+	r.Delete("/media/{mediaId}", h.DeleteMedia)
 	if h.chapters != nil {
 		r.Get("/media/{mediaId}/chapters", h.ListChapters)
 		r.Get("/chapters/{chapterId}", h.GetChapter)
@@ -66,6 +67,30 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Get("/downloads", h.ListDownloads)
 		r.Delete("/downloads/{chapterId}", h.DeleteDownload)
 	}
+}
+
+// DeleteMedia removes a library item and all database records that depend on
+// it. The repository returns the image keys before the cascading delete so the
+// handler can also remove the corresponding storage objects.
+func (h *Handler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
+	keys, deleted, err := h.repo.Delete(r.Context(), httpserver.PathParam(r, "mediaId"))
+	if err != nil {
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusInternalServerError, Title: "Database Error", Detail: "Failed to delete media from the library."})
+		return
+	}
+	if !deleted {
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusNotFound, Title: "Not Found", Detail: "The specified media was not found."})
+		return
+	}
+	if h.storage != nil {
+		for _, key := range keys {
+			if err := h.storage.Delete(r.Context(), key); err != nil {
+				httpserver.RespondError(w, httpserver.Problem{Status: http.StatusInternalServerError, Title: "Storage Error", Detail: "The media was removed, but one or more image files could not be deleted."})
+				return
+			}
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) ListChapters(w http.ResponseWriter, r *http.Request) {

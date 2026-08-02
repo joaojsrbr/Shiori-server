@@ -2,6 +2,16 @@
 
 Adicione uma entrada por branch mesclada, da mais recente para a mais antiga.
 
+## 2026-08-02 — feature/delete-media
+
+- Objetivo: oferecer exclusão completa de mangás e animes da biblioteca.
+- Resultado: endpoint destrutivo remove a obra e dependências relacionais por cascata, recolhe e apaga imagens do storage e distingue obra inexistente com 404.
+- Arquivos principais: `internal/library/http.go`, repositórios SQLite/PostgreSQL e `api/openapi/shiori.yaml`.
+- Contrato/migrations: `DELETE /api/v1/media/{mediaId}`; sem migration, pois as foreign keys existentes já usam `ON DELETE CASCADE`.
+- Verificações: testes de handler, deleção de storage e repositórios SQLite/PostgreSQL.
+- Decisões/ADRs: sem novo ADR; a operação segue a arquitetura de storage existente.
+- Próximo passo: apresentar confirmação destrutiva no cliente Flutter.
+
 ## Modelo
 
 ```markdown
