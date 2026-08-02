@@ -4,9 +4,8 @@ Antes de qualquer ação:
 
 1. leia `docs/prompts/PROMPT.md`;
 2. leia `docs/megabrain/README.md` e os documentos indicados por ele;
-3. leia ADRs relacionados à tarefa;
-4. inspecione `git status`, branch atual e histórico;
-5. siga o workflow Git abaixo.
+3. inspecione `git status`, branch atual e histórico;
+4. siga o workflow Git abaixo.
 
 ## Escopo
 
