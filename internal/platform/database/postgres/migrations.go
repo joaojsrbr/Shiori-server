@@ -7,20 +7,24 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/joaojsr/shiori-server/migrations"
 )
 
-// Migrate runs migrations reading from the provided source URL.
-// Typically sourceURL is "file://migrations/postgres"
-func Migrate(db *sql.DB, sourceURL string) error {
+// Migrate runs the PostgreSQL migrations embedded in the server binary.
+func Migrate(db *sql.DB, _ string) error {
+	sourceDriver, err := iofs.New(migrations.PostgresFS, "postgres")
+	if err != nil {
+		return fmt.Errorf("creating embedded postgres migration source: %w", err)
+	}
+	defer sourceDriver.Close()
+
 	driver, err := postgres.WithInstance(db, &postgres.Config{})
 	if err != nil {
 		return fmt.Errorf("creating postgres driver for migrate: %w", err)
 	}
 
-	m, err := migrate.NewWithDatabaseInstance(
-		sourceURL,
-		"postgres", driver)
+	m, err := migrate.NewWithInstance("iofs", sourceDriver, "postgres", driver)
 	if err != nil {
 		return fmt.Errorf("creating migrate instance: %w", err)
 	}

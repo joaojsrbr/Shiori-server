@@ -18,6 +18,8 @@ type Provider struct {
 	group  string
 }
 
+func (p *Provider) statusKey(jobID string) string { return p.stream + ":status:" + jobID }
+
 // New creates a new Valkey queue provider.
 func New(client *redis.Client, stream, group string) *Provider {
 	return &Provider{
@@ -45,7 +47,7 @@ func (p *Provider) Enqueue(ctx context.Context, job *queue.Job) error {
 	// Deduplication is handled by Redis logic or can be ignored in this simplified adapter
 	// For production, a Set could be used to check idempotency_key
 
-	_, err = p.client.XAdd(ctx, &redis.XAddArgs{
+	messageID, err := p.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: p.stream,
 		Values: map[string]interface{}{
 			"idempotency_key": job.IdempotencyKey,
@@ -58,6 +60,14 @@ func (p *Provider) Enqueue(ctx context.Context, job *queue.Job) error {
 
 	if err != nil {
 		return fmt.Errorf("enqueueing job: %w", err)
+	}
+	job.ID = messageID
+	job.Status = queue.StatusQueued
+	now := time.Now().UTC()
+	job.CreatedAt, job.UpdatedAt = now, now
+	encoded, _ := json.Marshal(job)
+	if err := p.client.Set(ctx, p.statusKey(job.ID), encoded, 7*24*time.Hour).Err(); err != nil {
+		return fmt.Errorf("recording job status: %w", err)
 	}
 	return nil
 }
@@ -99,32 +109,60 @@ func (p *Provider) Dequeue(ctx context.Context, types []string) (*queue.Job, err
 	if p, ok := msg.Values["payload"].(string); ok {
 		json.Unmarshal([]byte(p), &job.Payload)
 	}
+	job.UpdatedAt = time.Now().UTC()
+	encoded, _ := json.Marshal(job)
+	_ = p.client.Set(ctx, p.statusKey(job.ID), encoded, 7*24*time.Hour).Err()
 
 	return job, nil
 }
 
 func (p *Provider) Ack(ctx context.Context, jobID string) error {
-	return p.client.XAck(ctx, p.stream, p.group, jobID).Err()
+	if err := p.client.XAck(ctx, p.stream, p.group, jobID).Err(); err != nil {
+		return err
+	}
+	return p.updateStatus(ctx, jobID, queue.StatusSucceeded, "")
 }
 
 func (p *Provider) Nack(ctx context.Context, jobID string, reason string) error {
 	// A full implementation would handle retries, dead-lettering, or recording errors
 	// For now, we simply ACK to remove it from pending list if we don't want to retry.
 	// Or we can leave it to XCLAIM to pick up later.
-	return nil
+	return p.updateStatus(ctx, jobID, queue.StatusFailed, reason)
 }
 
 func (p *Provider) Heartbeat(ctx context.Context, jobID string) error {
 	// In Valkey Streams, Heartbeat can be simulated by updating a separate key or relying on pending time.
-	return nil
+	return p.client.Expire(ctx, p.statusKey(jobID), 7*24*time.Hour).Err()
 }
 
 func (p *Provider) Cancel(ctx context.Context, jobID string) error {
-	// Remove from stream
-	return p.client.XDel(ctx, p.stream, jobID).Err()
+	if _, err := p.client.XDel(ctx, p.stream, jobID).Result(); err != nil {
+		return err
+	}
+	return p.updateStatus(ctx, jobID, queue.StatusCancelled, "")
 }
 
 func (p *Provider) Status(ctx context.Context, jobID string) (*queue.Job, error) {
-	// Not fully implemented for Streams in this stub.
-	return &queue.Job{ID: jobID, Status: queue.StatusRunning}, nil
+	value, err := p.client.Get(ctx, p.statusKey(jobID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, queue.ErrJobNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var job queue.Job
+	if err := json.Unmarshal(value, &job); err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
+func (p *Provider) updateStatus(ctx context.Context, jobID string, status queue.JobStatus, reason string) error {
+	job, err := p.Status(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	job.Status, job.Error, job.UpdatedAt = status, reason, time.Now().UTC()
+	encoded, _ := json.Marshal(job)
+	return p.client.Set(ctx, p.statusKey(jobID), encoded, 7*24*time.Hour).Err()
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/joaojsr/shiori-server/internal/platform/browser"
 	"github.com/joaojsr/shiori-server/internal/platform/events"
 	"github.com/joaojsr/shiori-server/internal/platform/queue"
+	"github.com/joaojsr/shiori-server/internal/platform/storage"
 	"github.com/joaojsr/shiori-server/internal/worker"
 )
 
@@ -91,12 +92,14 @@ func stripNoisyTags(htmlStr, baseURL string) (string, string) {
 	base, _ := url.Parse(baseURL)
 
 	removeTags := map[string]bool{
-		"script": true, "style": true, "noscript": true, "svg": true, "path": true,
-		"iframe": true, "nav": true, "footer": true, "header": true,
-		"link": true, "meta": true, "button": true,
-		"form": true, "input": true, "select": true, "option": true, "textarea": true,
-		"dialog": true, "canvas": true, "map": true, "area": true, "aside": true,
-		"picture": true, "source": true,
+		// "form": true, "input": true, "select": true, "option": true, "textarea": true,
+		// "dialog": true, "canvas": true, "map": true, "area": true, "aside": true,
+		// "script": true,
+		"style": true, "noscript": true,
+		// "svg": true, "path": true,
+		// "iframe": true, "nav": true, "footer": true, "header": true,
+		// "link": true, "meta": true, "button": true,
+		// "picture": true, "source": true,
 	}
 
 	// Only keep attributes that carry real data for scraping.
@@ -116,6 +119,11 @@ func stripNoisyTags(htmlStr, baseURL string) (string, string) {
 					var keep []html.Attribute
 					for _, a := range c.Attr {
 						if keepAttr[strings.ToLower(a.Key)] {
+							if strings.EqualFold(a.Key, "src") && strings.HasPrefix(strings.ToLower(strings.TrimSpace(a.Val)), "data:") {
+								// Embedded chapter images are harvested before AI extraction.
+								// Never send their base64 payload to the model context.
+								a.Val = "embedded-image"
+							}
 							if base != nil && (a.Key == "href" || a.Key == "src") {
 								if ref, err := url.Parse(strings.TrimSpace(a.Val)); err == nil && !ref.IsAbs() && ref.Scheme == "" {
 									a.Val = base.ResolveReference(ref).String()
@@ -203,7 +211,10 @@ func nodeText(n *html.Node) string {
 	var walk func(*html.Node)
 	walk = func(current *html.Node) {
 		if current.Type == html.TextNode {
-			result.WriteString(current.Data)
+			if text := strings.TrimSpace(current.Data); text != "" {
+				result.WriteString(text)
+				result.WriteByte(' ')
+			}
 		}
 		for child := current.FirstChild; child != nil; child = child.NextSibling {
 			walk(child)
@@ -270,7 +281,15 @@ func NewExtractHandler(
 	repo library.MediaRepository,
 	cm *browser.ChallengeManager,
 	hub *events.Hub,
+	dependencies ...any,
 ) worker.Handler {
+	var files storage.Provider
+	for _, dependency := range dependencies {
+		if provider, ok := dependency.(storage.Provider); ok {
+			files = provider
+		}
+	}
+	chapterRepo, _ := repo.(library.ChapterRepository)
 	return func(ctx context.Context, job *queue.Job) error {
 		topic := "job:" + job.ID
 
@@ -281,6 +300,10 @@ func NewExtractHandler(
 		}
 
 		sendError := func(title, detail string, err error) error {
+			if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+				sendEvent("cancelled", map[string]string{"job_id": job.ID, "status": string(queue.StatusCancelled)})
+				return context.Canceled
+			}
 			sendEvent("error", map[string]string{"title": title, "detail": detail})
 			return fmt.Errorf("%s: %w", title, err)
 		}
@@ -311,10 +334,15 @@ func NewExtractHandler(
 
 		for {
 			// 2. Navigate and get HTML
-			sendEvent("progress", map[string]string{"step": "navigating", "message": fmt.Sprintf("Loading page %d in browser...", pageCount)})
+			loadMessage := fmt.Sprintf("Fetching page %d with FlareSolverr...", pageCount)
+			if payload.RequiresLogin {
+				loadMessage = fmt.Sprintf("Loading page %d in the login browser...", pageCount)
+			}
+			sendEvent("progress", map[string]string{"step": "navigating", "message": loadMessage})
 			navReq := browser.NavigateRequest{
 				URL:           currentURL,
 				ProfileURL:    payload.URL,
+				RequiresLogin: payload.RequiresLogin,
 				AutoScroll:    payload.AutoScroll,
 				ClickSelector: payload.ClickSelector,
 			}
@@ -324,7 +352,11 @@ func NewExtractHandler(
 				return sendError("Browser Error", "Failed to navigate: "+err.Error(), err)
 			}
 
-			sendEvent("progress", map[string]string{"step": "snapshot", "message": "Taking DOM snapshot..."})
+			snapshotMessage := "Using the HTML returned by FlareSolverr..."
+			if payload.RequiresLogin {
+				snapshotMessage = "Taking DOM snapshot from the login browser..."
+			}
+			sendEvent("progress", map[string]string{"step": "snapshot", "message": snapshotMessage})
 			snap, err := b.Snapshot(ctx, navRes.SessionID)
 			if err != nil {
 				b.CloseSession(context.Background(), navRes.SessionID)
@@ -416,6 +448,19 @@ func NewExtractHandler(
 				baseURL = currentURL
 			}
 			cleanHTML := distillHTML(snap.HTML, baseURL)
+			verifiedUnits := discoverUnitURLs(snap.HTML, baseURL)
+			cleanHTML = appendDiscoveredUnitURLs(cleanHTML, verifiedUnits, payload.Target)
+			if len(verifiedUnits) > 0 {
+				sendEvent("progress", map[string]any{
+					"step": "resolving_urls", "message": fmt.Sprintf("Recovered %d verified chapter/episode URLs from the page.", len(verifiedUnits)),
+					"resolved_urls": len(verifiedUnits),
+				})
+			} else {
+				sendEvent("progress", map[string]any{
+					"step": "resolving_urls", "message": "No verified chapter/episode URL pattern was found in this page.",
+					"resolved_urls": 0,
+				})
+			}
 			slog.Debug("html distilled to markdown", "original_bytes", len(snap.HTML), "distilled_bytes", len(cleanHTML))
 
 			// 4. Extract structured data via AI
@@ -426,6 +471,26 @@ func NewExtractHandler(
 				Target:  payload.Target,
 				OnProgress: func(msg string) {
 					sendEvent("progress", map[string]string{"step": "extracting", "message": msg})
+				},
+				OnInferenceProgress: func(progress extraction.InferenceProgress) {
+					message := fmt.Sprintf("LM Studio: waiting for the first token (chunk %d of %d)...", progress.Chunk, progress.Chunks)
+					if progress.Phase == "generating" || progress.Phase == "completed" {
+						qualifier := "tokens"
+						if progress.Estimated {
+							qualifier = "estimated tokens"
+						}
+						message = fmt.Sprintf("LM Studio: %d %s generated at %.1f tok/s", progress.GeneratedTokens, qualifier, progress.TokensPerSecond)
+						if progress.Phase == "completed" {
+							message = "LM Studio generation completed: " + strings.TrimPrefix(message, "LM Studio: ")
+						}
+					}
+					sendEvent("progress", map[string]any{
+						"step": "ai_inference", "phase": progress.Phase, "message": message,
+						"chunk": progress.Chunk, "chunks": progress.Chunks,
+						"generated_tokens": progress.GeneratedTokens, "token_limit": progress.TokenLimit,
+						"tokens_per_second": progress.TokensPerSecond, "elapsed_seconds": progress.Elapsed.Seconds(),
+						"estimated": progress.Estimated,
+					})
 				},
 			}
 
@@ -438,6 +503,7 @@ func NewExtractHandler(
 			if err := json.Unmarshal(lastRes.RawJSON, &parsed); err != nil {
 				return sendError("Extraction Error", "Invalid JSON from AI", err)
 			}
+			enrichExtractedUnitURLs(parsed, snap.HTML, baseURL, payload.Target)
 
 			if finalResultJSON == nil {
 				finalResultJSON = parsed
@@ -457,6 +523,9 @@ func NewExtractHandler(
 			// Check pagination
 			nextURL, ok := parsed["next_page_url"].(string)
 			if !ok || nextURL == "" || nextURL == currentURL {
+				break
+			}
+			if extractedUnitContainsURL(parsed, payload.Target, nextURL, currentURL) {
 				break
 			}
 
@@ -524,13 +593,20 @@ func NewExtractHandler(
 			Warnings:   lastRes.Warnings,
 		}
 
-		if payload.Target == extraction.TargetManga {
+		if payload.Target == extraction.TargetManga || payload.Target == extraction.TargetAnime {
 			var createReq library.MediaCreateRequest
 			if err := json.Unmarshal(finalRaw, &createReq); err != nil {
 				resp.Warnings = append(resp.Warnings, "failed to unmarshal extracted JSON: "+err.Error())
 				loopErr = fmt.Errorf("unmarshal error: %w", err) // Keep the error for logging but allow done event
 			} else {
 				createReq.SourceURL = payload.URL
+				if createReq.Type == "" {
+					if payload.Target == extraction.TargetAnime {
+						createReq.Type = library.MediaTypeAnime
+					} else {
+						createReq.Type = library.MediaTypeManga
+					}
+				}
 				media, dbErr := repo.Create(ctx, createReq)
 				if dbErr != nil {
 					resp.Warnings = append(resp.Warnings, "failed to save to database: "+dbErr.Error())
@@ -538,6 +614,9 @@ func NewExtractHandler(
 				} else {
 					resp.Saved = true
 					resp.MediaID = media.ID
+					if chapterRepo != nil && files != nil {
+						resp.Warnings = append(resp.Warnings, importExtractedUnits(ctx, b, files, chapterRepo, media, payload, finalResultJSON, sendEvent)...)
+					}
 					slog.Info("successfully extracted and saved media", "title", createReq.Title)
 					loopErr = nil
 				}

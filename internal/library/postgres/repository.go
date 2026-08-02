@@ -172,3 +172,96 @@ func (r *Repository) List(ctx context.Context) ([]*library.Media, error) {
 
 	return results, rows.Err()
 }
+
+func (r *Repository) UpsertChapter(ctx context.Context, req library.ChapterCreateRequest) (*library.Chapter, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("beginning chapter transaction: %w", err)
+	}
+	defer tx.Rollback()
+	id, now := library.NewULID(), time.Now().UTC()
+	var chapterID string
+	var created time.Time
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO chapters (id, media_id, number, title, source_url, video_url, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT(media_id, source_url) DO UPDATE SET
+			number=EXCLUDED.number, title=EXCLUDED.title, video_url=EXCLUDED.video_url
+		RETURNING id, created_at`, id, req.MediaID, req.Number, req.Title, req.SourceURL, req.VideoURL, now,
+	).Scan(&chapterID, &created)
+	if err != nil {
+		return nil, fmt.Errorf("upserting chapter: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM chapter_images WHERE chapter_id = $1`, chapterID); err != nil {
+		return nil, err
+	}
+	for _, image := range req.Images {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO chapter_images (chapter_id, position, storage_key, content_type) VALUES ($1, $2, $3, $4)`, chapterID, image.Position, image.StorageKey, image.ContentType); err != nil {
+			return nil, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &library.Chapter{ID: chapterID, MediaID: req.MediaID, Number: req.Number, Title: req.Title, SourceURL: req.SourceURL, VideoURL: req.VideoURL, Images: req.Images, CreatedAt: created}, nil
+}
+
+func (r *Repository) ListChapters(ctx context.Context, mediaID string) ([]*library.Chapter, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, media_id, number, title, source_url, video_url, created_at FROM chapters WHERE media_id = $1 ORDER BY created_at, id`, mediaID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]*library.Chapter, 0)
+	for rows.Next() {
+		chapter, err := scanChapter(rows)
+		if err != nil {
+			return nil, err
+		}
+		chapter.Images, err = r.listImages(ctx, chapter.ID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, chapter)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) GetChapter(ctx context.Context, id string) (*library.Chapter, error) {
+	chapter, err := scanChapter(r.db.QueryRowContext(ctx, `SELECT id, media_id, number, title, source_url, video_url, created_at FROM chapters WHERE id = $1`, id))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	chapter.Images, err = r.listImages(ctx, id)
+	return chapter, err
+}
+
+type rowScanner interface{ Scan(...any) error }
+
+func scanChapter(row rowScanner) (*library.Chapter, error) {
+	chapter := &library.Chapter{Images: []library.ChapterImage{}}
+	if err := row.Scan(&chapter.ID, &chapter.MediaID, &chapter.Number, &chapter.Title, &chapter.SourceURL, &chapter.VideoURL, &chapter.CreatedAt); err != nil {
+		return nil, err
+	}
+	return chapter, nil
+}
+
+func (r *Repository) listImages(ctx context.Context, chapterID string) ([]library.ChapterImage, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT position, storage_key, content_type FROM chapter_images WHERE chapter_id = $1 ORDER BY position`, chapterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	images := make([]library.ChapterImage, 0)
+	for rows.Next() {
+		var image library.ChapterImage
+		if err := rows.Scan(&image.Position, &image.StorageKey, &image.ContentType); err != nil {
+			return nil, err
+		}
+		images = append(images, image)
+	}
+	return images, rows.Err()
+}

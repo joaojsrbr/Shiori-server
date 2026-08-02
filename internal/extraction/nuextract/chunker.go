@@ -8,7 +8,7 @@ import (
 
 const (
 	defaultContextTokens      = 8192
-	defaultOutputTokens       = 2048
+	defaultOutputTokens       = 8192
 	contextOverheadTokens     = 512
 	conservativeBytesPerToken = 3
 )

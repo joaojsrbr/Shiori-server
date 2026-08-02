@@ -197,7 +197,7 @@ $env:GOARCH = "amd64"
 go build -trimpath -buildvcs=false -o dist\shiori-server.exe .\cmd\api
 ```
 
-Centralize o build em `back/scripts/build-portable.ps1` ou em um task runner.
+Centralize o build em `back/scripts/build.sh` ou em um task runner.
 Não dependa de um comando manual não documentado. Injete por `-ldflags`:
 
 - versão semântica;
@@ -368,8 +368,9 @@ back/
 ├── workers/
 │   └── browser/
 ├── scripts/
-│   ├── build-portable.ps1
-│   └── smoke-test.ps1
+│   ├── build.sh
+│   ├── smoke-test.sh
+│   └── test-api.sh
 ├── test/
 ├── Dockerfile
 ├── compose.yaml

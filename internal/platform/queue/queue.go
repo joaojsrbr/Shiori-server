@@ -32,18 +32,18 @@ const (
 
 // Job represents a unit of work.
 type Job struct {
-	ID             string
-	IdempotencyKey string
-	Type           string
-	Payload        json.RawMessage
-	Status         JobStatus
-	Priority       int
-	Attempts       int
-	MaxAttempts    int
-	Error          string
-	ScheduledAt    time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID             string          `json:"id"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
+	Type           string          `json:"type"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	Status         JobStatus       `json:"status"`
+	Priority       int             `json:"priority"`
+	Attempts       int             `json:"attempts"`
+	MaxAttempts    int             `json:"max_attempts"`
+	Error          string          `json:"error,omitempty"`
+	ScheduledAt    time.Time       `json:"scheduled_at"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 // Provider abstracts the durable queue implementation.

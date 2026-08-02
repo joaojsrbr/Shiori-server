@@ -35,6 +35,7 @@ import (
 	"github.com/joaojsr/shiori-server/internal/platform/database/postgres"
 	"github.com/joaojsr/shiori-server/internal/platform/database/sqlite"
 	"github.com/joaojsr/shiori-server/internal/platform/events"
+	"github.com/joaojsr/shiori-server/internal/platform/flaresolverr"
 	"github.com/joaojsr/shiori-server/internal/platform/httpserver"
 	"github.com/joaojsr/shiori-server/internal/platform/logging"
 	"github.com/joaojsr/shiori-server/internal/platform/queue"
@@ -82,7 +83,7 @@ func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	var flags config.Flags
 	fs.StringVar(&flags.Profile, "profile", "", "infrastructure profile (portable, docker)")
-	fs.StringVar(&flags.DataDir, "data-dir", "", "base data directory")
+	fs.StringVar(&flags.DataDir, "data-dir", "", "data directory")
 	fs.StringVar(&flags.Host, "host", "", "listen host")
 	fs.IntVar(&flags.Port, "port", 0, "listen port")
 	fs.StringVar(&flags.LogLevel, "log-level", "", "log level (debug, info, warn, error)")
@@ -121,8 +122,20 @@ func runServe(args []string) error {
 	switch cfg.Profile {
 	case config.ProfilePortable:
 		// Ensure data directory exists
-		dataFolder := filepath.Join(cfg.DataDir, "data")
-		os.MkdirAll(dataFolder, 0755)
+		dataFolder := cfg.DataDir
+		if err := os.MkdirAll(dataFolder, 0755); err != nil {
+			return fmt.Errorf("creating data directory: %w", err)
+		}
+
+		flareSolverr, err := flaresolverr.EnsureAndStart(context.Background(), dataFolder, logger)
+		if err != nil {
+			return fmt.Errorf("initializing flaresolverr: %w", err)
+		}
+		defer func() {
+			if closeErr := flareSolverr.Close(); closeErr != nil {
+				logger.Warn("failed to stop flaresolverr", "error", closeErr)
+			}
+		}()
 
 		// Database
 		dbPath := filepath.Join(dataFolder, "shiori.db")
@@ -141,14 +154,14 @@ func runServe(args []string) error {
 		queueProvider = sqlitequeue.New(dbProvider.DB())
 
 		// Storage
-		storageDir := filepath.Join(cfg.DataDir, "storage")
+		storageDir := filepath.Join(dataFolder, "storage")
 		storageProvider, err = localfs.New(storageDir)
 		if err != nil {
 			return fmt.Errorf("initializing localfs: %w", err)
 		}
 
 		// 4. Browser
-		browserProvider = chromedp.New(filepath.Join(dataFolder, "browser-profiles"))
+		browserProvider = chromedp.NewWithSolverEndpoint(filepath.Join(dataFolder, "browser-profiles"), cfg.FlareSolverr.URL)
 
 		// 5. Library Repositories
 		mediaRepo = libsqlite.NewRepository(dbProvider.DB())
@@ -160,10 +173,9 @@ func runServe(args []string) error {
 			return fmt.Errorf("initializing postgres database: %w", err)
 		}
 		defer dbProvider.Close()
-
-		// Note: Migrations would ideally run via a separate job or init container.
-		// For simplicity, we skip automatic migrations in this snippet,
-		// but they can be triggered by calling postgres.Migrate.
+		if err := dbProvider.Migrate(context.Background()); err != nil {
+			return fmt.Errorf("running postgres migrations: %w", err)
+		}
 
 		// 2. Valkey Queue
 		rdb := redis.NewClient(&redis.Options{
@@ -187,9 +199,9 @@ func runServe(args []string) error {
 			return fmt.Errorf("initializing minio storage: %w", err)
 		}
 
-		// 4. Browser (Worker later)
-		// For now, no browser capability in API container.
-		// Playwright worker will handle browser tasks.
+		// 4. FlareSolverr-backed navigation. Chromium is only started when the
+		// extraction request explicitly asks for an interactive login.
+		browserProvider = chromedp.NewWithSolverEndpoint(filepath.Join(cfg.DataDir, "browser-profiles"), cfg.FlareSolverr.URL)
 
 		// 5. Library Repositories
 		mediaRepo = libpostgres.NewRepository(dbProvider.DB())
@@ -207,7 +219,7 @@ func runServe(args []string) error {
 	challengeHandler := jobs.NewChallengeHandler(browserProvider, challengeManager)
 
 	// Register API routes
-	libHandler := library.NewHandler(mediaRepo)
+	libHandler := library.NewHandler(mediaRepo, mediaRepo, storageProvider)
 	aiHandler := ai.NewHandler(cfg.AI)
 
 	// Create Event Hub for SSE/PubSub
@@ -256,7 +268,7 @@ func runServe(args []string) error {
 		}
 	}
 
-	extractHandler := jobs.NewExtractHandler(browserProvider, extProvider, mediaRepo, challengeManager, eventHub)
+	extractHandler := jobs.NewExtractHandler(browserProvider, extProvider, mediaRepo, challengeManager, eventHub, storageProvider)
 	workerPool.Register("extract_media", extractHandler)
 
 	// Graceful shutdown context

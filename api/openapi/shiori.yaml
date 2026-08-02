@@ -73,9 +73,15 @@ paths:
       operationId: listMedia
       tags:
         - Library
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: A list of media items
+          headers:
+            X-Next-Cursor:
+              $ref: '#/components/headers/NextCursor'
           content:
             application/json:
               schema:
@@ -106,7 +112,6 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
-
   /api/v1/media/{mediaId}:
     get:
       summary: Get media by ID
@@ -132,6 +137,62 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+
+  /api/v1/media/{mediaId}/chapters:
+    get:
+      summary: List chapters or episodes for a library item
+      operationId: listMediaChapters
+      tags: [Library]
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Reader entries; manga includes local image URLs and anime includes only a remote video URL
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Chapter' }
+
+  /api/v1/chapters/{chapterId}:
+    get:
+      summary: Get one chapter or episode for reading/playback
+      operationId: getChapter
+      tags: [Library]
+      parameters:
+        - name: chapterId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Reader entry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Chapter' }
+        '404':
+          description: Chapter not found
+
+  /api/v1/reader/assets/{assetPath}:
+    get:
+      summary: Read a stored manga page image
+      operationId: getReaderAsset
+      tags: [Library]
+      parameters:
+        - name: assetPath
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Stored image bytes
+          content:
+            image/*: {}
+        '404':
+          description: Image not found
 
   /api/v1/ai/models:
     get:
@@ -178,6 +239,22 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /api/v1/ai/models/{modelKey}/unload:
+    post:
+      summary: Unload a configured AI model from memory
+      operationId: unloadAIModel
+      tags: [AI]
+      parameters:
+        - $ref: '#/components/parameters/ModelKey'
+      responses:
+        '204': { description: Model unloaded or already unloaded }
+        '502':
+          description: LM Studio unavailable or failed to unload
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
   /api/v1/jobs/extract:
     post:
       summary: Enqueue an extraction job
@@ -196,7 +273,7 @@ paths:
                   format: uri
                 target:
                   type: string
-                  enum: [media, chapter_list]
+                  enum: [manga, anime]
                 requires_login:
                   type: boolean
                   default: false
@@ -232,6 +309,145 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+
+  /api/v1/jobs/{jobID}:
+    get:
+      summary: Get durable job status
+      operationId: getJob
+      tags: [Jobs]
+      parameters: [{ $ref: '#/components/parameters/JobID' }]
+      responses:
+        '200':
+          description: Current job state
+          content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } }
+        '404': { description: Job not found }
+    delete:
+      summary: Cooperatively cancel a queued or running job
+      operationId: cancelJob
+      tags: [Jobs]
+      parameters: [{ $ref: '#/components/parameters/JobID' }]
+      responses:
+        '204': { description: Cancellation accepted }
+        '404': { description: Job not found }
+        '409': { description: Job is already in a terminal state }
+
+  /api/v1/jobs/{jobID}/events:
+    get:
+      summary: Stream and replay job events
+      description: Reconnect with Last-Event-ID or the after query parameter. Events have id, event and JSON data fields.
+      operationId: streamJobEvents
+      tags: [Jobs]
+      parameters:
+        - $ref: '#/components/parameters/JobID'
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string }
+        - name: after
+          in: query
+          schema: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: SSE events progress, challenge, done, error or cancelled
+          content: { text/event-stream: { schema: { type: string } } }
+
+  /api/v1/collections:
+    get:
+      summary: List collections
+      tags: [Library]
+      responses:
+        '200': { description: Collections, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Collection' } } } } }
+    post:
+      summary: Create a collection
+      tags: [Library]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CollectionInput' } } } }
+      responses:
+        '201': { description: Created collection, content: { application/json: { schema: { $ref: '#/components/schemas/Collection' } } } }
+
+  /api/v1/collections/{collectionId}:
+    parameters: [{ $ref: '#/components/parameters/CollectionID' }]
+    get:
+      summary: Get a collection
+      tags: [Library]
+      responses: { '200': { description: Collection, content: { application/json: { schema: { $ref: '#/components/schemas/Collection' } } } }, '404': { description: Not found } }
+    patch:
+      summary: Rename or describe a collection
+      tags: [Library]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CollectionInput' } } } }
+      responses: { '200': { description: Updated collection, content: { application/json: { schema: { $ref: '#/components/schemas/Collection' } } } } }
+    delete:
+      summary: Delete a collection
+      tags: [Library]
+      responses: { '204': { description: Deleted } }
+
+  /api/v1/collections/{collectionId}/media:
+    get:
+      summary: List media in a collection
+      tags: [Library]
+      parameters:
+        - $ref: '#/components/parameters/CollectionID'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200': { description: Media, headers: { X-Next-Cursor: { $ref: '#/components/headers/NextCursor' } }, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Media' } } } } }
+
+  /api/v1/collections/{collectionId}/media/{mediaId}:
+    parameters:
+      - $ref: '#/components/parameters/CollectionID'
+      - name: mediaId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      summary: Add media to a collection
+      tags: [Library]
+      responses: { '204': { description: Added } }
+    delete:
+      summary: Remove media from a collection
+      tags: [Library]
+      responses: { '204': { description: Removed } }
+
+  /api/v1/history:
+    get:
+      summary: List reading history
+      tags: [Library]
+      parameters: [{ $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Cursor' }]
+      responses:
+        '200': { description: History, headers: { X-Next-Cursor: { $ref: '#/components/headers/NextCursor' } }, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/HistoryEntry' } } } } }
+
+  /api/v1/history/{chapterId}:
+    parameters:
+      - name: chapterId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      summary: Save reading progress
+      tags: [Library]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/HistoryInput' } } } }
+      responses: { '200': { description: Saved progress, content: { application/json: { schema: { $ref: '#/components/schemas/HistoryEntry' } } } } }
+    delete:
+      summary: Remove a history entry
+      tags: [Library]
+      responses: { '204': { description: Removed } }
+
+  /api/v1/downloads:
+    get:
+      summary: List manga chapters saved in storage
+      tags: [Library]
+      parameters: [{ $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Cursor' }]
+      responses:
+        '200': { description: Downloads, headers: { X-Next-Cursor: { $ref: '#/components/headers/NextCursor' } }, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Download' } } } } }
+
+  /api/v1/downloads/{chapterId}:
+    delete:
+      summary: Remove the stored images for a chapter
+      tags: [Library]
+      parameters:
+        - name: chapterId
+          in: path
+          required: true
+          schema: { type: string }
+      responses: { '204': { description: Download removed } }
 
   /api/v1/challenges/{token}:
     get:
@@ -334,6 +550,29 @@ paths:
 
 components:
   parameters:
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    JobID:
+      name: jobID
+      in: path
+      required: true
+      schema: { type: string }
+    CollectionID:
+      name: collectionId
+      in: path
+      required: true
+      schema: { type: string }
+    ModelKey:
+      name: modelKey
+      in: path
+      required: true
+      schema: { type: string, enum: [tiny, default, quality] }
     ChallengeToken:
       name: token
       in: path
@@ -342,6 +581,11 @@ components:
       schema:
         type: string
         format: uuid
+
+  headers:
+    NextCursor:
+      description: Opaque cursor for the next page; absent on the last page.
+      schema: { type: string }
 
   responses:
     ChallengeNotFound:
@@ -517,6 +761,34 @@ components:
         - type
         - title
 
+    ChapterImage:
+      type: object
+      properties:
+        position: { type: integer, minimum: 1 }
+        url:
+          type: string
+          description: Local Shiori URL for the stored manga page image
+        content_type: { type: string }
+      required: [position, url]
+
+    Chapter:
+      type: object
+      properties:
+        id: { type: string }
+        media_id: { type: string }
+        number: { type: string }
+        title: { type: string }
+        source_url: { type: string, format: uri }
+        video_url:
+          type: string
+          format: uri
+          description: Remote video/player URL for anime; Shiori does not download the video
+        images:
+          type: array
+          items: { $ref: '#/components/schemas/ChapterImage' }
+        created_at: { type: string, format: date-time }
+      required: [id, media_id, number, title, source_url, images, created_at]
+
     AIModel:
       type: object
       properties:
@@ -534,3 +806,59 @@ components:
         - key
         - name
         - is_loaded
+
+    Collection:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, name, description, created_at, updated_at]
+    CollectionInput:
+      type: object
+      properties: { name: { type: string }, description: { type: string } }
+      required: [name]
+    HistoryEntry:
+      type: object
+      properties:
+        chapter_id: { type: string }
+        media_id: { type: string }
+        title: { type: string }
+        number: { type: string }
+        position: { type: integer, minimum: 0 }
+        progress: { type: number, minimum: 0, maximum: 1 }
+        completed: { type: boolean }
+        updated_at: { type: string, format: date-time }
+      required: [chapter_id, media_id, title, number, position, progress, completed, updated_at]
+    HistoryInput:
+      type: object
+      properties:
+        position: { type: integer, minimum: 0 }
+        progress: { type: number, minimum: 0, maximum: 1 }
+        completed: { type: boolean }
+      required: [position, progress, completed]
+    Download:
+      type: object
+      properties:
+        chapter_id: { type: string }
+        media_id: { type: string }
+        title: { type: string }
+        number: { type: string }
+        image_count: { type: integer }
+        status: { type: string, const: completed }
+        created_at: { type: string, format: date-time }
+      required: [chapter_id, media_id, title, number, image_count, status, created_at]
+    Job:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string }
+        status: { type: string, enum: [queued, running, requires_user_action, retry_scheduled, succeeded, succeeded_with_warnings, failed, cancelled] }
+        attempts: { type: integer }
+        max_attempts: { type: integer }
+        error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, type, status]

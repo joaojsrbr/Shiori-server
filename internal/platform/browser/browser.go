@@ -9,6 +9,7 @@ import (
 type NavigateRequest struct {
 	URL           string
 	ProfileURL    string // Optional URL whose hostname owns the isolated persistent profile.
+	RequiresLogin bool   // Starts Chromium only for an explicitly requested login flow.
 	WaitFor       string // CSS selector to wait for (optional)
 	Timeout       int    // Timeout in milliseconds (0 means default)
 	AutoScroll    bool   // If true, attempts to scroll to bottom repeatedly until network is idle
@@ -62,6 +63,12 @@ type Provider interface {
 	// Input events are received from the input channel.
 	// This method blocks until the context is cancelled or the session closes.
 	Screencast(ctx context.Context, sessionID string, frames chan<- []byte, input <-chan InputEvent) error
+}
+
+// AssetFetcher downloads a page asset with the same domain profile cookies
+// used by FlareSolverr and the optional login browser.
+type AssetFetcher interface {
+	FetchAsset(ctx context.Context, profileURL, assetURL, referer string) ([]byte, string, error)
 }
 
 // InputEvent represents a user interaction on the screencast canvas.

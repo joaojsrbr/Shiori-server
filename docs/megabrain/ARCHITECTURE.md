@@ -47,7 +47,7 @@ DOM renderizado
   -> merge e deduplicação determinísticos
 ```
 
-O contexto padrão é `8192` tokens, a saída reserva no máximo `2048`, e cada
+O contexto padrão é `8192` tokens, a saída reserva no máximo `8192`, e cada
 chunk tem teto adicional de `12000` bytes. Ambos os limites são configuráveis.
 
 ## Retomada após ação humana

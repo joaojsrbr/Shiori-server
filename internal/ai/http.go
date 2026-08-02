@@ -25,6 +25,7 @@ func NewHandler(cfg config.AIConfig) *Handler {
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/ai/models", h.ListModels)
 	r.Post("/ai/models/{modelKey}/load", h.LoadModel)
+	r.Post("/ai/models/{modelKey}/unload", h.UnloadModel)
 }
 
 type AIModel struct {
@@ -48,7 +49,7 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 
 	loadedMap := make(map[string]bool)
 	for _, m := range loaded {
-		loadedMap[m.ID] = true
+		loadedMap[m.Key] = len(m.LoadedInstances) > 0
 	}
 
 	response := []AIModel{
@@ -72,18 +73,24 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 	httpserver.RespondJSON(w, http.StatusOK, response)
 }
 
+func (h *Handler) modelName(modelKey string) (string, bool) {
+	switch modelKey {
+	case "tiny":
+		return h.cfg.ModelTiny, true
+	case "default":
+		return h.cfg.ModelDefault, true
+	case "quality":
+		return h.cfg.ModelQuality, true
+	default:
+		return "", false
+	}
+}
+
 func (h *Handler) LoadModel(w http.ResponseWriter, r *http.Request) {
 	modelKey := httpserver.PathParam(r, "modelKey")
 
-	var modelName string
-	switch modelKey {
-	case "tiny":
-		modelName = h.cfg.ModelTiny
-	case "default":
-		modelName = h.cfg.ModelDefault
-	case "quality":
-		modelName = h.cfg.ModelQuality
-	default:
+	modelName, ok := h.modelName(modelKey)
+	if !ok {
 		httpserver.RespondError(w, httpserver.Problem{
 			Status: http.StatusBadRequest,
 			Title:  "Invalid Model Key",
@@ -102,5 +109,34 @@ func (h *Handler) LoadModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) UnloadModel(w http.ResponseWriter, r *http.Request) {
+	modelName, ok := h.modelName(httpserver.PathParam(r, "modelKey"))
+	if !ok {
+		httpserver.RespondError(w, httpserver.Problem{Status: 400, Title: "Invalid Model Key", Detail: "Available keys are: tiny, default, quality."})
+		return
+	}
+	models, err := h.client.ListModels(r.Context())
+	if err != nil {
+		httpserver.RespondError(w, httpserver.Problem{Status: 502, Title: "LM Studio Unavailable", Detail: err.Error()})
+		return
+	}
+	instanceID := ""
+	for _, model := range models {
+		if model.Key == modelName && len(model.LoadedInstances) > 0 {
+			instanceID = model.LoadedInstances[0].ID
+			break
+		}
+	}
+	if instanceID == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := h.client.UnloadModel(r.Context(), instanceID); err != nil {
+		httpserver.RespondError(w, httpserver.Problem{Status: 502, Title: "LM Studio Failed to Unload", Detail: err.Error()})
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

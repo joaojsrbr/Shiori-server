@@ -11,8 +11,8 @@ func TestContextBudgetReservesTemplateAndOutput(t *testing.T) {
 	if maxBytes > 12000 {
 		t.Fatalf("maxBytes = %d, exceeds configured hard limit", maxBytes)
 	}
-	if outputTokens != 2048 {
-		t.Fatalf("outputTokens = %d, want 2048", outputTokens)
+	if outputTokens != 8192 {
+		t.Fatalf("outputTokens = %d, want 8192", outputTokens)
 	}
 }
 

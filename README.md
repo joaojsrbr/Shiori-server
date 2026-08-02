@@ -3,7 +3,6 @@
 Área reservada ao servidor Go e aos workers auxiliares. 
 O Shiori Backend é uma API robusta projetada para extrair dados estruturados (mangás, animes) de páginas da web, utilizando automação de navegadores (ChromeDP) em conjunto com Inteligência Artificial Local (LM Studio / Llama).
 
-Antes de implementar, leia [docs/prompts/PROMPT.md](docs/prompts/PROMPT.md).
 A memória persistente do projeto fica em [docs/megabrain/README.md](docs/megabrain/README.md).
 
 ## Arquitetura e Componentes
@@ -36,6 +35,41 @@ O backend segue um modelo de API HTTP + Background Workers para tarefas longas.
 1. Go 1.22+
 2. LM Studio rodando localmente, com `SHIORI_AI_MAX_CONTEXT_LENGTH` igual à janela realmente carregada (padrão: `8192`).
 3. Google Chrome instalado no sistema (para o ChromeDP).
+
+No perfil portátil Windows, o servidor baixa o FlareSolverr 3.5.0 para
+`.shiori/FlareSolverr/` quando `flaresolverr.exe` ainda não existe e inicia o
+processo oculto em `127.0.0.1:8191` junto com o Shiori.
+
+O caminho configurado por `SHIORI_DATA_DIR` representa a própria pasta
+privada do Shiori. Com `SHIORI_DATA_DIR=./.shiori`, a estrutura é:
+
+```text
+.shiori/shiori.db
+.shiori/FlareSolverr/
+.shiori/browser-profiles/
+.shiori/storage/
+```
+
+No Docker, o serviço já está incluído no `compose.yaml`. Para executá-lo
+separadamente:
+
+```powershell
+docker run -d --name=flaresolverr -p 127.0.0.1:8191:8191 -e LOG_LEVEL=info --restart unless-stopped ghcr.io/flaresolverr/flaresolverr:latest
+```
+
+### Scripts Bash
+
+No Linux, macOS, WSL ou Git Bash:
+
+```bash
+./scripts/build.sh
+./scripts/smoke-test.sh
+./scripts/test-api.sh
+./scripts/test-lycantoons.sh
+```
+
+O `build.sh` gera o executavel Windows `dist/shiori-server.exe` sem executar
+testes automaticamente.
 
 ### Passos
 1. Entre na pasta `back`:

@@ -14,6 +14,7 @@ services:
       - SHIORI_MINIO_SECRET_KEY=shiori_secret_pass
       - SHIORI_MINIO_BUCKET=shiori-storage
       - SHIORI_MINIO_USE_SSL=false
+      - SHIORI_FLARESOLVERR_URL=http://flaresolverr:8191/v1
     depends_on:
       postgres:
         condition: service_healthy
@@ -21,6 +22,18 @@ services:
         condition: service_started
       minio:
         condition: service_healthy
+      flaresolverr:
+        condition: service_started
+    networks:
+      - shiori-net
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    ports:
+      - "127.0.0.1:8191:8191"
+    environment:
+      - LOG_LEVEL=info
+    restart: unless-stopped
     networks:
       - shiori-net
 

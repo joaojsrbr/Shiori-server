@@ -119,7 +119,35 @@ func (p *Pool) processJob(ctx context.Context, job *queue.Job, workerID int) {
 		return
 	}
 
-	err := handler(ctx, job)
+	jobCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-jobCtx.Done():
+				return
+			case <-ticker.C:
+				current, err := p.q.Status(context.Background(), job.ID)
+				if err == nil && current.Status == queue.StatusCancelled {
+					cancel()
+					return
+				}
+				_ = p.q.Heartbeat(context.Background(), job.ID)
+			}
+		}
+	}()
+	err := handler(jobCtx, job)
+	close(done)
+	cancel()
+	current, statusErr := p.q.Status(context.Background(), job.ID)
+	if statusErr == nil && current.Status == queue.StatusCancelled {
+		log.Info("job cancelled")
+		return
+	}
 	if err != nil {
 		log.Error("job failed", "error", err)
 		_ = p.q.Nack(context.Background(), job.ID, err.Error())

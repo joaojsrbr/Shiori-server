@@ -50,7 +50,7 @@ Adicione uma entrada por branch mesclada, da mais recente para a mais antiga.
 
 - Objetivo: reduzir o contexto enviado ao NuExtract3 sem cortar estruturas úteis e simplificar o executável portátil.
 - Resultado: metadados/JSON-LD preservados, URLs normalizadas, Markdown segmentado por blocos e títulos, orçamento baseado na janela real, prompt GGUF compatível com LM Studio, endpoint debug unificado em `http.go` e build Windows reduzido a um `.exe` de console.
-- Arquivos principais: `internal/jobs/extract.go`, `internal/jobs/http.go`, `internal/extraction/nuextract/chunker.go`, `internal/extraction/nuextract/provider.go`, `scripts/build-portable.ps1`.
+- Arquivos principais: `internal/jobs/extract.go`, `internal/jobs/http.go`, `internal/extraction/nuextract/chunker.go`, `internal/extraction/nuextract/provider.go`, `scripts/build.sh`.
 - Contrato/migrations: porta padrão e Docker alinhados em `8080`; nenhuma migration; endpoint debug continua fora do contrato público e só existe em log-level debug.
 - Verificações: testes unitários do orçamento, UTF-8, breadcrumb, deduplicação, metadados, URLs e gate da rota; suíte Go completa; build e smoke portátil.
 - Decisões/ADRs: ADR 0009.

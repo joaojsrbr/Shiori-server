@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 // TargetType defines the semantic entity expected from the extraction.
@@ -36,6 +37,22 @@ type Request struct {
 
 	// Callback to report progress (e.g. processing chunks)
 	OnProgress func(string)
+
+	// OnInferenceProgress reports live model generation telemetry. TokenLimit
+	// is a ceiling, not a completion total, so callers must not present it as a
+	// definitive percentage.
+	OnInferenceProgress func(InferenceProgress)
+}
+
+type InferenceProgress struct {
+	Phase           string
+	Chunk           int
+	Chunks          int
+	GeneratedTokens int
+	TokenLimit      int
+	TokensPerSecond float64
+	Elapsed         time.Duration
+	Estimated       bool
 }
 
 // Result represents the outcome of the extraction process.

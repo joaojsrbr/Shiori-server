@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	db, err := sql.Open("sqlite", "dist/data/data/shiori.db")
+	db, err := sql.Open("sqlite", "dist/.shiori/shiori.db")
 	if err != nil {
 		log.Fatalf("failed to open db: %v", err)
 	}

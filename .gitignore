@@ -12,6 +12,7 @@
 coverage.*
 
 # Portable runtime data
+/.shiori/
 /data/
 /storage/
 /backups/
@@ -22,6 +23,8 @@ coverage.*
 
 # Go dependencies and local workspaces
 /vendor/
+/.gocache/
+/.gopath/
 go.work
 go.work.sum
 

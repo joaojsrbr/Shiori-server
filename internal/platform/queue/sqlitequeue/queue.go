@@ -217,7 +217,8 @@ func (p *Provider) Heartbeat(ctx context.Context, jobID string) error {
 func (p *Provider) Cancel(ctx context.Context, jobID string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := p.db.ExecContext(ctx, `
-		UPDATE job_queue SET status = 'cancelled', lease_token = NULL, updated_at = ? WHERE id = ?
+		UPDATE job_queue SET status = 'cancelled', lease_token = NULL, updated_at = ?
+		WHERE id = ? AND status IN ('queued','running','requires_user_action','retry_scheduled')
 	`, now, jobID)
 	if err != nil {
 		return err

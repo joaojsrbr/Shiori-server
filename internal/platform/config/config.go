@@ -33,10 +33,15 @@ type Config struct {
 	Server  ServerConfig
 	Log     LogConfig
 
-	Postgres PostgresConfig
-	Valkey   ValkeyConfig
-	MinIO    MinIOConfig
-	AI       AIConfig
+	Postgres     PostgresConfig
+	Valkey       ValkeyConfig
+	MinIO        MinIOConfig
+	AI           AIConfig
+	FlareSolverr FlareSolverrConfig
+}
+
+type FlareSolverrConfig struct {
+	URL string
 }
 
 type AIConfig struct {
@@ -125,6 +130,9 @@ func Defaults() Config {
 			MaxContextLength: 8192,
 			MaxContentBytes:  12000,
 		},
+		FlareSolverr: FlareSolverrConfig{
+			URL: "http://127.0.0.1:8191/v1",
+		},
 	}
 }
 
@@ -159,13 +167,13 @@ func Load(flags Flags) (Config, error) {
 		cfg.DataDir = flags.DataDir
 	}
 
-	// If data dir is still empty, resolve relative to executable.
+	// If data dir is still empty, use the private Shiori directory beside the executable.
 	if cfg.DataDir == "" {
 		exePath, err := os.Executable()
 		if err != nil {
 			return cfg, fmt.Errorf("resolving executable path: %w", err)
 		}
-		cfg.DataDir = filepath.Dir(exePath)
+		cfg.DataDir = filepath.Join(filepath.Dir(exePath), ".shiori")
 	}
 
 	// Resolve to absolute path.
@@ -215,6 +223,9 @@ func Load(flags Flags) (Config, error) {
 	}
 	if v := envInt("SHIORI_AI_MAX_CONTENT_BYTES", 0); v > 0 {
 		cfg.AI.MaxContentBytes = v
+	}
+	if v := envOr("SHIORI_FLARESOLVERR_URL", ""); v != "" {
+		cfg.FlareSolverr.URL = v
 	}
 
 	if flags.LogLevel != "" {
@@ -267,6 +278,9 @@ func (c Config) Validate() error {
 
 	if c.DataDir == "" {
 		errs = append(errs, errors.New("data directory must not be empty"))
+	}
+	if strings.TrimSpace(c.FlareSolverr.URL) == "" {
+		errs = append(errs, errors.New("flaresolverr URL must not be empty"))
 	}
 
 	if c.Server.Port < 1 || c.Server.Port > 65535 {

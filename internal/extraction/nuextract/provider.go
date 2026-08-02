@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/joaojsr/shiori-server/internal/extraction"
 	"github.com/joaojsr/shiori-server/internal/platform/ai/lmstudio"
@@ -19,6 +20,10 @@ var embeddedTemplates []byte
 // AIClient defines the dependencies we need from an AI HTTP Client (like lmstudio.Client)
 type AIClient interface {
 	Infer(ctx context.Context, req lmstudio.InferRequest) (string, error)
+}
+
+type streamingAIClient interface {
+	InferStream(ctx context.Context, req lmstudio.InferRequest, onProgress func(lmstudio.InferProgress)) (string, error)
 }
 
 // Provider implements the extraction.Provider using NuExtract through LM Studio.
@@ -111,12 +116,51 @@ func (p *Provider) Extract(ctx context.Context, req extraction.Request) (*extrac
 			MaxTokens:   outputTokens,
 		}
 
-		inferOutput, err := p.client.Infer(ctx, inferReq)
+		if req.OnInferenceProgress != nil {
+			req.OnInferenceProgress(extraction.InferenceProgress{Phase: "waiting_first_token", Chunk: i + 1, Chunks: len(chunks), TokenLimit: outputTokens})
+		}
+		var inferOutput string
+		var err error
+		if streamingClient, ok := p.client.(streamingAIClient); ok {
+			lastUpdate := time.Time{}
+			inferOutput, err = streamingClient.InferStream(ctx, inferReq, func(progress lmstudio.InferProgress) {
+				now := time.Now()
+				if !progress.Done && !lastUpdate.IsZero() && now.Sub(lastUpdate) < 750*time.Millisecond {
+					return
+				}
+				lastUpdate = now
+				if req.OnInferenceProgress != nil {
+					phase := "generating"
+					if progress.Done {
+						phase = "completed"
+					}
+					req.OnInferenceProgress(extraction.InferenceProgress{
+						Phase: phase, Chunk: i + 1, Chunks: len(chunks), GeneratedTokens: progress.GeneratedTokens,
+						TokenLimit: outputTokens, TokensPerSecond: progress.TokensPerSecond, Elapsed: progress.Elapsed, Estimated: progress.Estimated,
+					})
+				}
+			})
+		} else {
+			inferOutput, err = p.client.Infer(ctx, inferReq)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%w: chunk %d: %v", extraction.ErrModelUnavailable, i+1, err)
 		}
 
 		jsonString, repaired, ok := extractAndRepairJSON(inferOutput)
+		if !ok {
+			if req.OnProgress != nil {
+				req.OnProgress(fmt.Sprintf("Model returned invalid JSON for chunk %d; retrying once with strict JSON output...", i+1))
+			}
+			retryReq := inferReq
+			retryReq.Temperature = 0
+			retryReq.Messages = []lmstudio.ChatMessage{{Role: "user", Content: prompt + "\n\nReturn exactly one valid JSON object. Do not use Markdown, explanations, comments, or text outside the JSON object."}}
+			inferOutput, err = p.client.Infer(ctx, retryReq)
+			if err != nil {
+				return nil, fmt.Errorf("%w: chunk %d retry: %v", extraction.ErrModelUnavailable, i+1, err)
+			}
+			jsonString, repaired, ok = extractAndRepairJSON(inferOutput)
+		}
 		if !ok {
 			if i == 0 {
 				return nil, fmt.Errorf("%w: chunk 1: no valid JSON object found in output", extraction.ErrExtractionFailed)

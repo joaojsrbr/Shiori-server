@@ -84,6 +84,7 @@ func HandleDebugExtract(
 
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
+		lastSent := time.Now()
 		forward := func(eventData any) bool {
 			message, ok := eventData.(map[string]any)
 			if !ok {
@@ -93,6 +94,7 @@ func HandleDebugExtract(
 			data, _ := json.Marshal(message["data"])
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
 			flusher.Flush()
+			lastSent = time.Now()
 			return event == "done" || event == "error"
 		}
 		for {
@@ -100,8 +102,11 @@ func HandleDebugExtract(
 			case <-r.Context().Done():
 				return
 			case <-ticker.C:
-				fmt.Fprint(w, ": heartbeat\n\n")
-				flusher.Flush()
+				if time.Since(lastSent) >= 15*time.Second {
+					fmt.Fprint(w, ": heartbeat\n\n")
+					flusher.Flush()
+					lastSent = time.Now()
+				}
 			case err := <-done:
 				// The worker publishes its terminal event before returning. Drain
 				// queued events first so select scheduling cannot hide that detail.
@@ -140,7 +145,49 @@ func NewHandler(q queue.Provider, hub *events.Hub) *Handler {
 // RegisterRoutes registers the jobs routes to the router.
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/jobs/extract", h.EnqueueExtract)
+	r.Get("/jobs/{jobID}", h.JobStatus)
+	r.Delete("/jobs/{jobID}", h.CancelJob)
 	r.Get("/jobs/{jobID}/events", h.JobEvents)
+}
+
+func (h *Handler) JobStatus(w http.ResponseWriter, r *http.Request) {
+	job, err := h.q.Status(r.Context(), chi.URLParam(r, "jobID"))
+	if errors.Is(err, queue.ErrJobNotFound) || job == nil {
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusNotFound, Title: "Job Not Found", Detail: "The specified job was not found."})
+		return
+	}
+	if err != nil {
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusInternalServerError, Title: "Queue Error", Detail: err.Error()})
+		return
+	}
+	httpserver.RespondJSON(w, http.StatusOK, job)
+}
+
+func (h *Handler) CancelJob(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "jobID")
+	job, statusErr := h.q.Status(r.Context(), jobID)
+	if errors.Is(statusErr, queue.ErrJobNotFound) || job == nil {
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusNotFound, Title: "Job Not Found", Detail: "The specified job was not found."})
+		return
+	}
+	if statusErr != nil {
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusInternalServerError, Title: "Queue Error", Detail: statusErr.Error()})
+		return
+	}
+	if job.Status == queue.StatusSucceeded || job.Status == queue.StatusSucceededWarnings || job.Status == queue.StatusFailed || job.Status == queue.StatusCancelled {
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusConflict, Title: "Job Already Finished", Detail: "A terminal job cannot be cancelled."})
+		return
+	}
+	if err := h.q.Cancel(r.Context(), jobID); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, queue.ErrJobNotFound) {
+			status = http.StatusNotFound
+		}
+		httpserver.RespondError(w, httpserver.Problem{Status: status, Title: "Cancellation Error", Detail: err.Error()})
+		return
+	}
+	h.hub.Publish("job:"+jobID, map[string]any{"event": "cancelled", "data": map[string]string{"job_id": jobID, "status": string(queue.StatusCancelled)}})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) EnqueueExtract(w http.ResponseWriter, r *http.Request) {
@@ -222,9 +269,9 @@ func (h *Handler) JobEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	sendEvent := func(evt string, data any) {
+	sendEvent := func(id uint64, evt string, data any) {
 		b, _ := json.Marshal(data)
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt, string(b))
+		fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", id, evt, string(b))
 		flusher.Flush()
 	}
 
@@ -232,13 +279,33 @@ func (h *Handler) JobEvents(w http.ResponseWriter, r *http.Request) {
 	// In a complete system, we would check the DB for the job status first.
 	// For now, we subscribe to live events.
 	topic := "job:" + jobID
-	ch := h.hub.Subscribe(topic)
-	defer h.hub.Unsubscribe(topic, ch)
+	afterID := events.ParseLastEventID(r.Header.Get("Last-Event-ID"))
+	if afterID == 0 {
+		afterID = events.ParseLastEventID(r.URL.Query().Get("after"))
+	}
+	ch, replay := h.hub.SubscribeFrom(topic, afterID)
+	defer h.hub.UnsubscribeEvent(topic, ch)
+	lastSent := time.Now()
+	forward := func(event events.Event) bool {
+		m, ok := event.Data.(map[string]any)
+		if !ok {
+			return false
+		}
+		evt, _ := m["event"].(string)
+		sendEvent(event.ID, evt, m["data"])
+		lastSent = time.Now()
+		return evt == "done" || evt == "error" || evt == "cancelled"
+	}
 
 	// Keep alive loop or wait for events
 	ctx := r.Context()
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
+	for _, event := range replay {
+		if forward(event) {
+			return
+		}
+	}
 
 	for {
 		select {
@@ -247,16 +314,20 @@ func (h *Handler) JobEvents(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 			// Send a heartbeat comment to keep the connection alive
 			// Most proxies/browsers drop idle connections after 60-120s
-			fmt.Fprintf(w, ": heartbeat\n\n")
-			flusher.Flush()
+			if time.Since(lastSent) >= 15*time.Second {
+				fmt.Fprintf(w, ": heartbeat\n\n")
+				flusher.Flush()
+				lastSent = time.Now()
+			}
 		case eventData := <-ch:
 			// eventData is map[string]any{"event": evt, "data": data}
-			if m, ok := eventData.(map[string]any); ok {
+			if m, ok := eventData.Data.(map[string]any); ok {
 				evt, _ := m["event"].(string)
 				data := m["data"]
-				sendEvent(evt, data)
+				sendEvent(eventData.ID, evt, data)
+				lastSent = time.Now()
 
-				if evt == "done" || evt == "error" {
+				if evt == "done" || evt == "error" || evt == "cancelled" {
 					return
 				}
 			}

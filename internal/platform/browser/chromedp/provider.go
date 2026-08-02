@@ -24,18 +24,29 @@ import (
 
 // Provider implements browser.Provider using local chromedp.
 type Provider struct {
-	baseDir       string
-	mu            sync.Mutex
-	sessions      map[string]*session
-	profileLeases map[string]chan struct{}
+	baseDir        string
+	solverEndpoint string
+	mu             sync.Mutex
+	sessions       map[string]*session
+	profileLeases  map[string]chan struct{}
+	profileStates  map[string]sharedProfileState
+}
+
+type sharedProfileState struct {
+	cookies   []solverCookie
+	userAgent string
 }
 
 type session struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	releaseProfile func()
-	requestedURL   string
-	status         int
+	ctx             context.Context
+	cancel          context.CancelFunc
+	releaseProfile  func()
+	requestedURL    string
+	status          int
+	solverAttempted bool
+	solverHTML      string
+	solverFinalURL  string
+	profileKey      string
 }
 
 type renderedPage struct {
@@ -53,10 +64,17 @@ const automaticChallengeWait = 10 * time.Second
 // New creates the provider.
 // baseDir is used for isolated browser profiles.
 func New(baseDir string) *Provider {
+	return NewWithSolverEndpoint(baseDir, defaultSolverEndpoint)
+}
+
+// NewWithSolverEndpoint creates the provider with an explicit FlareSolverr API endpoint.
+func NewWithSolverEndpoint(baseDir, solverEndpoint string) *Provider {
 	return &Provider{
-		baseDir:       baseDir,
-		sessions:      make(map[string]*session),
-		profileLeases: make(map[string]chan struct{}),
+		baseDir:        baseDir,
+		solverEndpoint: strings.TrimSpace(solverEndpoint),
+		sessions:       make(map[string]*session),
+		profileLeases:  make(map[string]chan struct{}),
+		profileStates:  make(map[string]sharedProfileState),
 	}
 }
 
@@ -67,10 +85,6 @@ func (p *Provider) IsAvailable() bool {
 }
 
 func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*browser.NavigateResult, error) {
-	if !p.IsAvailable() {
-		return nil, errors.New("chromedp: browser not available")
-	}
-
 	targetURL := req.URL
 	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
 		targetURL = "https://" + targetURL
@@ -82,6 +96,12 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 	profileKey, err := domainProfileKey(profileURL)
 	if err != nil {
 		return nil, fmt.Errorf("chromedp: invalid target URL: %w", err)
+	}
+	if !req.RequiresLogin {
+		return p.navigateWithSolver(ctx, targetURL, profileKey)
+	}
+	if !p.IsAvailable() {
+		return nil, errors.New("chromedp: browser not available")
 	}
 	releaseProfile, err := p.acquireProfile(ctx, profileKey)
 	if err != nil {
@@ -124,6 +144,11 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 	if err := chromedp.Run(browserCtx); err != nil {
 		cancelSession()
 		return nil, fmt.Errorf("chromedp: start browser: %w", err)
+	}
+	sharedState := p.getProfileState(profileKey)
+	if err := applyCookiesToChromium(browserCtx, targetURL, sharedState.cookies, sharedState.userAgent); err != nil {
+		cancelSession()
+		return nil, err
 	}
 
 	var timeoutCtx context.Context
@@ -208,18 +233,47 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 	var finalURL string
 	actions = append(actions, chromedp.Location(&finalURL))
 
-	if err := chromedp.Run(timeoutCtx, actions...); err != nil {
-		cancelSession()
-		return nil, fmt.Errorf("chromedp: navigate failed: %w", err)
+	status := 200
+	usedSolver := false
+	var solverHTML string
+	var solverFinalURL string
+	if navigateErr := chromedp.Run(timeoutCtx, actions...); navigateErr != nil {
+		sharedState = p.getProfileState(profileKey)
+		solution, solverErr := fetchSolverSolution(browserCtx, p.solverEndpoint, targetURL, sharedState.cookies)
+		if solverErr != nil {
+			cancelSession()
+			return nil, fmt.Errorf("chromedp: navigate failed: %w; solver fallback failed: %v", navigateErr, solverErr)
+		}
+		if err := applySolverSolution(browserCtx, targetURL, solution); err != nil {
+			cancelSession()
+			return nil, err
+		}
+		status = solution.Status
+		p.mergeProfileState(profileKey, solution.Cookies, solution.UserAgent)
+		usedSolver = true
+		solverHTML = solution.Response
+		solverFinalURL = solution.URL
+		if solverFinalURL == "" {
+			solverFinalURL = targetURL
+		}
+		if solution.URL != "" {
+			finalURL = solution.URL
+		} else {
+			finalURL = targetURL
+		}
 	}
 
 	p.mu.Lock()
 	p.sessions[sessionID] = &session{
-		ctx:            browserCtx,
-		cancel:         cancelSession,
-		releaseProfile: releaseProfile,
-		requestedURL:   targetURL,
-		status:         200,
+		ctx:             browserCtx,
+		cancel:          cancelSession,
+		releaseProfile:  releaseProfile,
+		requestedURL:    targetURL,
+		status:          status,
+		solverAttempted: usedSolver,
+		solverHTML:      solverHTML,
+		solverFinalURL:  solverFinalURL,
+		profileKey:      profileKey,
 	}
 	p.mu.Unlock()
 	releaseOnError = false
@@ -231,6 +285,63 @@ func (p *Provider) Navigate(ctx context.Context, req browser.NavigateRequest) (*
 		FinalURL:  finalURL,
 		Status:    200,
 	}, nil
+}
+
+func (p *Provider) navigateWithSolver(ctx context.Context, targetURL, profileKey string) (*browser.NavigateResult, error) {
+	sharedState := p.getProfileState(profileKey)
+	solution, err := fetchSolverSolution(ctx, p.solverEndpoint, targetURL, sharedState.cookies)
+	if err != nil {
+		return nil, fmt.Errorf("flaresolverr: navigate failed: %w", err)
+	}
+	finalURL := strings.TrimSpace(solution.URL)
+	if finalURL == "" {
+		finalURL = targetURL
+	}
+	p.mergeProfileState(profileKey, solution.Cookies, solution.UserAgent)
+	sessionID := uuid.New().String()
+	p.mu.Lock()
+	p.sessions[sessionID] = &session{
+		requestedURL:    targetURL,
+		status:          solution.Status,
+		solverAttempted: true,
+		solverHTML:      solution.Response,
+		solverFinalURL:  finalURL,
+		profileKey:      profileKey,
+	}
+	p.mu.Unlock()
+	return &browser.NavigateResult{
+		SessionID: sessionID,
+		FinalURL:  finalURL,
+		Status:    solution.Status,
+	}, nil
+}
+
+func (p *Provider) getProfileState(profileKey string) sharedProfileState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state := p.profileStates[profileKey]
+	state.cookies = append([]solverCookie(nil), state.cookies...)
+	return state
+}
+
+func (p *Provider) mergeProfileState(profileKey string, cookies []solverCookie, userAgent string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state := p.profileStates[profileKey]
+	state.cookies = mergeSolverCookies(state.cookies, cookies)
+	if strings.TrimSpace(userAgent) != "" {
+		state.userAgent = userAgent
+	}
+	p.profileStates[profileKey] = state
+}
+
+func (p *Provider) replaceProfileState(profileKey string, cookies []solverCookie, userAgent string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.profileStates[profileKey] = sharedProfileState{
+		cookies:   append([]solverCookie(nil), cookies...),
+		userAgent: userAgent,
+	}
 }
 
 func domainProfileKey(rawURL string) (string, error) {
@@ -274,6 +385,15 @@ func (p *Provider) Snapshot(ctx context.Context, sessionID string) (*browser.Pag
 	if !exists {
 		return nil, errors.New("chromedp: session not found")
 	}
+	if activeSession.ctx == nil {
+		return &browser.PageSnapshot{
+			HTML:       activeSession.solverHTML,
+			FinalURL:   activeSession.solverFinalURL,
+			Status:     activeSession.status,
+			Headers:    make(map[string]string),
+			UserAction: false,
+		}, nil
+	}
 
 	select {
 	case <-ctx.Done():
@@ -289,24 +409,65 @@ func (p *Provider) Snapshot(ctx context.Context, sessionID string) (*browser.Pag
 	}()
 
 	page, err := captureRenderedPage(snapshotCtx)
+	if err == nil && classifyUserAction(page, activeSession.requestedURL) == browser.UserActionChallenge {
+		page, err = waitForAutomaticChallenge(snapshotCtx, page)
+	}
+	actionKind := classifyUserAction(page, activeSession.requestedURL)
+	shouldUseSolver := err != nil || actionKind == browser.UserActionChallenge || actionKind == browser.UserActionBlocked
+	p.mu.Lock()
+	shouldAttemptSolver := shouldUseSolver && !activeSession.solverAttempted
+	if shouldAttemptSolver {
+		activeSession.solverAttempted = true
+	}
+	p.mu.Unlock()
+	if shouldAttemptSolver {
+		sharedState := p.getProfileState(activeSession.profileKey)
+		solution, solverErr := fetchSolverSolution(snapshotCtx, p.solverEndpoint, activeSession.requestedURL, sharedState.cookies)
+		if solverErr == nil {
+			solverErr = applySolverSolution(snapshotCtx, activeSession.requestedURL, solution)
+		}
+		if solverErr == nil {
+			p.mergeProfileState(activeSession.profileKey, solution.Cookies, solution.UserAgent)
+			p.mu.Lock()
+			activeSession.status = solution.Status
+			activeSession.solverHTML = solution.Response
+			activeSession.solverFinalURL = solution.URL
+			if activeSession.solverFinalURL == "" {
+				activeSession.solverFinalURL = activeSession.requestedURL
+			}
+			p.mu.Unlock()
+			page, err = captureRenderedPage(snapshotCtx)
+			actionKind = classifyUserAction(page, activeSession.requestedURL)
+		} else if err != nil {
+			return nil, fmt.Errorf("chromedp: capture snapshot: %w; solver fallback failed: %v", err, solverErr)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("chromedp: capture snapshot: %w", err)
 	}
-	if classifyUserAction(page, activeSession.requestedURL) == browser.UserActionChallenge {
-		page, err = waitForAutomaticChallenge(snapshotCtx, page)
-		if err != nil {
-			return nil, fmt.Errorf("chromedp: wait for automatic challenge: %w", err)
-		}
+	cookies, userAgent, err := captureChromiumState(snapshotCtx)
+	if err != nil {
+		return nil, fmt.Errorf("chromedp: capture shared cookies: %w", err)
 	}
+	p.replaceProfileState(activeSession.profileKey, cookies, userAgent)
+	p.mu.Lock()
+	if activeSession.solverHTML != "" {
+		page.HTML = activeSession.solverHTML
+	}
+	if activeSession.solverFinalURL != "" {
+		page.FinalURL = activeSession.solverFinalURL
+	}
+	status := activeSession.status
+	p.mu.Unlock()
 	if strings.TrimSpace(page.HTML) == "" {
 		return nil, errors.New("chromedp: captured an empty document")
 	}
 
-	actionKind := classifyUserAction(page, activeSession.requestedURL)
+	actionKind = classifyUserAction(page, activeSession.requestedURL)
 	return &browser.PageSnapshot{
 		HTML:           page.HTML,
 		FinalURL:       page.FinalURL,
-		Status:         activeSession.status,
+		Status:         status,
 		Headers:        make(map[string]string),
 		Assets:         page.Assets,
 		UserAction:     actionKind != browser.UserActionNone,
@@ -483,6 +644,12 @@ func (p *Provider) CloseSession(ctx context.Context, sessionID string) error {
 	if !exists {
 		return nil
 	}
+	if activeSession.ctx == nil {
+		if activeSession.releaseProfile != nil {
+			activeSession.releaseProfile()
+		}
+		return nil
+	}
 
 	closeCtx, cancelClose := context.WithTimeout(activeSession.ctx, 5*time.Second)
 	closeErr := chromedp.Cancel(closeCtx)
@@ -504,6 +671,9 @@ func (p *Provider) Screencast(ctx context.Context, sessionID string, frames chan
 
 	if !exists {
 		return errors.New("chromedp: session not found")
+	}
+	if activeSession.ctx == nil {
+		return errors.New("chromedp: screencast is available only for explicit login sessions")
 	}
 
 	streamCtx, cancelStream := context.WithCancel(activeSession.ctx)
