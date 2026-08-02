@@ -50,6 +50,13 @@ DOM renderizado
 O contexto padrão é `8192` tokens, a saída reserva no máximo `8192`, e cada
 chunk tem teto adicional de `12000` bytes. Ambos os limites são configuráveis.
 
+## Exclusão de biblioteca
+
+O repositório de mídia executa a coleta das `storage_key` e a exclusão da obra
+na mesma transação. Foreign keys com `ON DELETE CASCADE` removem capítulos,
+imagens registradas, histórico e vínculos com coleções. Após o commit, o
+handler apaga os objetos correspondentes no provider de storage.
+
 ## Retomada após ação humana
 
 ```text

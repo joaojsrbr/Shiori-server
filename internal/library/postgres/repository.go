@@ -173,6 +173,51 @@ func (r *Repository) List(ctx context.Context) ([]*library.Media, error) {
 	return results, rows.Err()
 }
 
+func (r *Repository) Delete(ctx context.Context, id string) ([]string, bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("beginning media deletion: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT i.storage_key
+		FROM chapter_images i
+		JOIN chapters c ON c.id = i.chapter_id
+		WHERE c.media_id = $1`, id)
+	if err != nil {
+		return nil, false, fmt.Errorf("listing media storage keys: %w", err)
+	}
+	keys := make([]string, 0)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			return nil, false, fmt.Errorf("scanning media storage key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, false, fmt.Errorf("closing media storage keys: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("listing media storage keys: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM media WHERE id = $1`, id)
+	if err != nil {
+		return nil, false, fmt.Errorf("deleting media: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, fmt.Errorf("counting deleted media: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("committing media deletion: %w", err)
+	}
+	return keys, count > 0, nil
+}
+
 func (r *Repository) UpsertChapter(ctx context.Context, req library.ChapterCreateRequest) (*library.Chapter, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

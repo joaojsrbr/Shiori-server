@@ -96,3 +96,30 @@ func TestRepository_GetByID(t *testing.T) {
 		t.Errorf("unfulfilled expectations: %s", err)
 	}
 }
+
+func TestRepository_Delete(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %s", err)
+	}
+	defer db.Close()
+	repo := postgres.NewRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT i.storage_key").WithArgs("media-1").
+		WillReturnRows(sqlmock.NewRows([]string{"storage_key"}).AddRow("media/media-1/page.jpg"))
+	mock.ExpectExec("DELETE FROM media WHERE id = \\$1").WithArgs("media-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	keys, deleted, err := repo.Delete(context.Background(), "media-1")
+	if err != nil {
+		t.Fatalf("delete failed: %v", err)
+	}
+	if !deleted || len(keys) != 1 || keys[0] != "media/media-1/page.jpg" {
+		t.Fatalf("unexpected delete result: deleted=%v keys=%v", deleted, keys)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled expectations: %s", err)
+	}
+}
