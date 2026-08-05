@@ -1,8 +1,11 @@
 # Prompt de implementação — Shiori Backend
 
-Copie este documento integralmente para uma conversa nova com o Gemini 3.1 Pro
-quando quiser construir o backend. O agente deve tratar este arquivo como
+Copie este documento integralmente para uma conversa nova com o agente
+quando quiser continuar o backend. O agente deve tratar este arquivo como
 especificação executável e fonte de verdade da área `back/`.
+
+> **Estado atual (2026-08):** A fundação está implementada e na `main`.
+> Ver seção "Primeiras entregas" para o status de cada item.
 
 ## Missão
 
@@ -306,72 +309,80 @@ recomendada.
 
 ### Automação de release
 
-Crie comandos únicos e reproduzíveis:
+**Já implementado:** `.github/workflows/release.yml` compila `shiori-server.exe` e publica Release no GitHub automaticamente ao receber uma tag `v*`.
 
-```text
-build
-test
-build-portable-exe
-docker-build
-release
+Para criar e incrementar tags automaticamente:
+
+```powershell
+# PowerShell (Windows)
+.\scripts\tag-release.ps1 -Push
+
+# Bash / Linux / WSL
+./scripts/tag-release.sh --push
 ```
 
 O pipeline de release deve:
 
 1. executar testes, vet e análise estática;
-2. gerar OpenAPI e verificar diff;
-3. compilar uma única vez o `shiori-server.exe`;
-4. executar smoke test do `.exe` em uma pasta vazia;
-5. confirmar criação de `data/shiori.db` ao lado do `.exe`;
-6. construir e testar as imagens Docker separadamente;
-7. gerar SHA-256 e SBOM do `.exe` sem empacotá-lo com outros arquivos;
-8. publicar somente se todas as verificações passarem.
+2. compilar uma única vez o `shiori-server.exe` com `CGO_ENABLED=0 GOOS=windows GOARCH=amd64`;
+3. gerar SHA-256 do `.exe`;
+4. publicar somente se todas as verificações passarem.
 
 Nunca publique artefatos com configuração real, cookies, dados, modelos locais
 ou tokens do LM Studio.
 
 ## Estrutura desejada
 
-Comece com um monólito modular:
+Monólito modular. Estrutura atual implementada:
 
 ```text
 back/
 ├── cmd/
-│   ├── api/
-│   └── worker/
+│   └── api/                         ← servidor principal
 ├── internal/
-│   ├── platform/
-│   │   ├── config/
-│   │   ├── database/
-│   │   ├── events/
-│   │   ├── httpserver/
-│   │   ├── logging/
-│   │   ├── queue/
-│   │   └── storage/
-│   ├── identity/
-│   ├── media/
-│   ├── sources/
-│   ├── library/
-│   ├── chapters/
-│   ├── progress/
-│   ├── assets/
+│   ├── ai/                          ← roteador de modelos
+│   ├── buildinfo/                   ← versão, commit, data
 │   ├── extraction/
-│   ├── jobs/
-│   ├── translation/
-│   ├── sync/
-│   └── backup/
+│   │   ├── fake/                    ← mock para testes
+│   │   └── nuextract/               ← provider NuExtract + chunker semântico
+│   ├── jobs/                        ← handlers de jobs, distilador HTML, desafios
+│   ├── library/                     ← repositório de mídia/biblioteca
+│   │   ├── postgres/
+│   │   └── sqlite/
+│   ├── platform/
+│   │   ├── ai/lmstudio/             ← client HTTP do LM Studio
+│   │   ├── browser/
+│   │   │   └── chromedp/            ← adapter ChromeDP
+│   │   ├── config/                  ← config tipada (env + flags)
+│   │   ├── database/
+│   │   │   ├── postgres/
+│   │   │   └── sqlite/
+│   │   ├── events/                  ← hub SSE Pub/Sub
+│   │   ├── flaresolverr/            ← integração FlareSolverr
+│   │   ├── httpserver/              ← servidor HTTP, middlewares
+│   │   ├── logging/                 ← logs JSON estruturados
+│   │   ├── queue/
+│   │   │   ├── sqlitequeue/         ← fila durável SQLite
+│   │   │   └── valkeyqueue/         ← fila Valkey/Redis
+│   │   └── storage/
+│   │       ├── localfs/             ← filesystem local
+│   │       └── s3fs/                ← MinIO/S3
+│   └── worker/                      ← pool de workers
 ├── api/
-│   └── openapi/
+│   └── openapi/                     ← shiori.yaml (fonte de verdade)
 ├── migrations/
 │   ├── sqlite/
 │   └── postgres/
-├── workers/
-│   └── browser/
 ├── scripts/
-│   ├── build.sh
+│   ├── build.sh                     ← compila dist/shiori-server.exe
 │   ├── smoke-test.sh
-│   └── test-api.sh
-├── test/
+│   ├── test-api.sh
+│   ├── test-lycantoons.sh
+│   ├── tag-release.ps1              ← cria e incrementa tag Git (PowerShell)
+│   └── tag-release.sh              ← cria e incrementa tag Git (Bash)
+├── .github/
+│   └── workflows/
+│       └── release.yml              ← autobuild e release no GitHub Actions
 ├── Dockerfile
 ├── compose.yaml
 └── .env.example
@@ -766,21 +777,22 @@ npm test
 
 ## Primeiras entregas
 
-Faça nesta ordem:
+Legenda: ✅ Concluído · 🔄 Em andamento · ⬜ Pendente
 
-1. ADRs curtos: module path, router HTTP, perfis SQLite/PostgreSQL, migrations,
-   filas, navegadores e geração OpenAPI;
-2. `go.mod`, config tipada, logging, shutdown e health checks;
-3. OpenAPI mínimo e tratamento padronizado de erros;
-4. SQLite, fila SQLite, filesystem e adapter de navegador Go;
-5. build único do `.exe`, comando `version` e smoke test portátil;
-6. PostgreSQL, Valkey, MinIO, Dockerfile e Compose;
-7. mídia/biblioteca mínima persistida nos dois perfis;
-8. interface `ExtractionProvider` e fake testável;
-9. adapter LM Studio com list/load/infer e três aliases;
-10. sanitizador semântico, schema e consolidador;
-11. job `ANALYZE_SOURCE`;
-12. worker Playwright Docker e fluxo `requires_user_action`.
+1. ✅ `go.mod`, config tipada, logging, shutdown e health checks;
+2. ✅ OpenAPI completo (`api/openapi/shiori.yaml`) — 41 rotas, fonte de verdade;
+3. ✅ SQLite, fila SQLite, filesystem e adapter de navegador Go (ChromeDP + FlareSolverr);
+4. ✅ Build único do `.exe` (`scripts/build.sh`), autobuild e release no GitHub Actions;
+5. ✅ PostgreSQL, Valkey, MinIO, Dockerfile e Compose;
+6. ✅ Biblioteca completa (mídia, capítulos, coleções, histórico, downloads, filtros, perfis, settings);
+7. ✅ Interface `ExtractionProvider`, fake testável e adapter NuExtract com chunker semântico;
+8. ✅ Adapter LM Studio (`list/load/unload/infer/infer-stream`);
+9. ✅ Sanitizador semântico HTML (`distillHTML` + `stripNoisyTags`) e job de extração assíncrona;
+10. ✅ Worker pool, handlers de desafio (Cloudflare/login) e SSE de progresso;
+11. ✅ Scripts `tag-release.ps1` / `tag-release.sh` para incremento automático de tags;
+12. ⬜ Worker Playwright Docker e fluxo robusto de `requires_user_action`;
+13. ⬜ Downloads e manifesto de capítulos — pipeline de imagens, deduplicação, OCR;
+14. ⬜ Tradução, sincronização e backup.
 
 Em cada conversa, implemente somente a próxima entrega coerente.
 
