@@ -102,7 +102,37 @@ type Download struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// FeatureRepository backs collections, reading history and saved downloads.
+type Profile struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	AvatarURL string `json:"avatar_url"`
+}
+
+type Settings struct {
+	Theme             string         `json:"theme"`
+	AdblockEnabled    bool           `json:"adblock_enabled"`
+	KeyboardShortcuts map[string]any `json:"keyboard_shortcuts"`
+}
+
+type BrowserHistoryEntry struct {
+	ID        string    `json:"id"`
+	URL       string    `json:"url"`
+	Title     string    `json:"title"`
+	VisitedAt time.Time `json:"visited_at"`
+}
+
+type FilterPreset struct {
+	ID      string         `json:"id"`
+	Name    string         `json:"name"`
+	Filters map[string]any `json:"filters"`
+}
+
+type FilterPresetInput struct {
+	Name    string         `json:"name"`
+	Filters map[string]any `json:"filters"`
+}
+
+// FeatureRepository backs collections, reading history, saved downloads, settings, and presets.
 type FeatureRepository interface {
 	ListCollections(context.Context) ([]*Collection, error)
 	CreateCollection(context.Context, string, string) (*Collection, error)
@@ -117,6 +147,13 @@ type FeatureRepository interface {
 	DeleteHistory(context.Context, string) error
 	ListDownloads(context.Context, int, string) ([]*Download, string, error)
 	DeleteDownload(context.Context, string) ([]string, error)
+
+	ListProfiles(context.Context) ([]*Profile, error)
+	GetSettings(context.Context) (*Settings, error)
+	UpdateSettings(context.Context, Settings) (*Settings, error)
+	ListBrowserHistory(context.Context, int, string) ([]*BrowserHistoryEntry, string, error)
+	ListFilterPresets(context.Context) ([]*FilterPreset, error)
+	CreateFilterPreset(context.Context, string, map[string]any) (*FilterPreset, error)
 }
 
 // Chapter is a readable unit belonging to a media item. Manga-like media use

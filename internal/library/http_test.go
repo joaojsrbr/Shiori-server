@@ -151,3 +151,134 @@ func TestLibraryHandler_DeleteMediaNotFound(t *testing.T) {
 		t.Fatalf("expected 404 Not Found, got %d", rr.Code)
 	}
 }
+
+type mockFeatureRepo struct {
+	settings library.Settings
+	presets  []*library.FilterPreset
+	history  []*library.BrowserHistoryEntry
+}
+
+func (m *mockFeatureRepo) ListCollections(ctx context.Context) ([]*library.Collection, error) {
+	return nil, nil
+}
+func (m *mockFeatureRepo) CreateCollection(ctx context.Context, name, desc string) (*library.Collection, error) {
+	return nil, nil
+}
+func (m *mockFeatureRepo) GetCollection(ctx context.Context, id string) (*library.Collection, error) {
+	return nil, nil
+}
+func (m *mockFeatureRepo) UpdateCollection(ctx context.Context, id, name, desc string) (*library.Collection, error) {
+	return nil, nil
+}
+func (m *mockFeatureRepo) DeleteCollection(ctx context.Context, id string) error { return nil }
+func (m *mockFeatureRepo) ListCollectionMedia(ctx context.Context, id string, limit int, cursor string) ([]*library.Media, string, error) {
+	return nil, "", nil
+}
+func (m *mockFeatureRepo) AddCollectionMedia(ctx context.Context, cid, mid string) error { return nil }
+func (m *mockFeatureRepo) RemoveCollectionMedia(ctx context.Context, cid, mid string) error {
+	return nil
+}
+func (m *mockFeatureRepo) ListHistory(ctx context.Context, limit int, cursor string) ([]*library.HistoryEntry, string, error) {
+	return nil, "", nil
+}
+func (m *mockFeatureRepo) UpsertHistory(ctx context.Context, cid string, pos int, prog float64, comp bool) (*library.HistoryEntry, error) {
+	return nil, nil
+}
+func (m *mockFeatureRepo) DeleteHistory(ctx context.Context, id string) error { return nil }
+func (m *mockFeatureRepo) ListDownloads(ctx context.Context, limit int, cursor string) ([]*library.Download, string, error) {
+	return nil, "", nil
+}
+func (m *mockFeatureRepo) DeleteDownload(ctx context.Context, id string) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockFeatureRepo) ListProfiles(ctx context.Context) ([]*library.Profile, error) {
+	return []*library.Profile{{ID: "default", Name: "Default Profile"}}, nil
+}
+func (m *mockFeatureRepo) GetSettings(ctx context.Context) (*library.Settings, error) {
+	return &m.settings, nil
+}
+func (m *mockFeatureRepo) UpdateSettings(ctx context.Context, s library.Settings) (*library.Settings, error) {
+	m.settings = s
+	return &m.settings, nil
+}
+func (m *mockFeatureRepo) ListBrowserHistory(ctx context.Context, limit int, cursor string) ([]*library.BrowserHistoryEntry, string, error) {
+	return m.history, "", nil
+}
+func (m *mockFeatureRepo) ListFilterPresets(ctx context.Context) ([]*library.FilterPreset, error) {
+	return m.presets, nil
+}
+func (m *mockFeatureRepo) CreateFilterPreset(ctx context.Context, name string, filters map[string]any) (*library.FilterPreset, error) {
+	preset := &library.FilterPreset{ID: "p1", Name: name, Filters: filters}
+	m.presets = append(m.presets, preset)
+	return preset, nil
+}
+
+func TestLibraryHandler_SystemAndFilterRoutes(t *testing.T) {
+	featRepo := &mockFeatureRepo{
+		settings: library.Settings{Theme: "dark", AdblockEnabled: true},
+		history:  []*library.BrowserHistoryEntry{{ID: "h1", URL: "https://example.com", Title: "Example"}},
+	}
+	h := library.NewHandler(&mockMediaRepo{}, featRepo)
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+
+	t.Run("GET /profiles", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/profiles", nil)
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("GET /settings", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("PUT /settings", func(t *testing.T) {
+		body, _ := json.Marshal(library.Settings{Theme: "light", AdblockEnabled: false})
+		req := httptest.NewRequest(http.MethodPut, "/settings", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("GET /browser/history", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/browser/history", nil)
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("GET /filters/presets", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/filters/presets", nil)
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("POST /filters/presets", func(t *testing.T) {
+		input := library.FilterPresetInput{Name: "Manga Action", Filters: map[string]any{"type": "manga"}}
+		body, _ := json.Marshal(input)
+		req := httptest.NewRequest(http.MethodPost, "/filters/presets", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Errorf("expected 201 Created, got %d", rr.Code)
+		}
+	})
+}
