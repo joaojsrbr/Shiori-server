@@ -568,6 +568,59 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /api/v1/profiles:
+    get:
+      summary: List available local reading profiles
+      operationId: listProfiles
+      tags: [System]
+      responses:
+        '200':
+          description: Profiles
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Profile' } } } }
+
+  /api/v1/settings:
+    get:
+      summary: Get user settings
+      operationId: getSettings
+      tags: [System]
+      responses:
+        '200':
+          description: Settings
+          content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } }
+    put:
+      summary: Update user settings
+      operationId: updateSettings
+      tags: [System]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }
+      responses: { '200': { description: Updated settings, content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } } }
+
+  /api/v1/browser/history:
+    get:
+      summary: List in-app browser history
+      operationId: listBrowserHistory
+      tags: [Browser]
+      parameters: [{ $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Cursor' }]
+      responses:
+        '200':
+          description: Browser history
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/BrowserHistoryEntry' } } } }
+
+  /api/v1/filters/presets:
+    get:
+      summary: List saved filter presets
+      operationId: listFilterPresets
+      tags: [Library]
+      responses:
+        '200':
+          description: Filter presets
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/FilterPreset' } } } }
+    post:
+      summary: Create a filter preset
+      operationId: createFilterPreset
+      tags: [Library]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/FilterPresetInput' } } } }
+      responses: { '201': { description: Created preset, content: { application/json: { schema: { $ref: '#/components/schemas/FilterPreset' } } } } }
+
 components:
   parameters:
     Limit:
@@ -725,6 +778,12 @@ components:
           type: array
           items:
             type: string
+        has_new_chapters:
+          type: boolean
+          default: false
+        sort_order:
+          type: integer
+          default: 0
         created_at:
           type: string
           format: date-time
@@ -850,6 +909,9 @@ components:
         position: { type: integer, minimum: 0 }
         progress: { type: number, minimum: 0, maximum: 1 }
         completed: { type: boolean }
+        bookmarks:
+          type: array
+          items: { type: integer, minimum: 0 }
         updated_at: { type: string, format: date-time }
       required: [chapter_id, media_id, title, number, position, progress, completed, updated_at]
     HistoryInput:
@@ -858,6 +920,9 @@ components:
         position: { type: integer, minimum: 0 }
         progress: { type: number, minimum: 0, maximum: 1 }
         completed: { type: boolean }
+        bookmarks:
+          type: array
+          items: { type: integer, minimum: 0 }
       required: [position, progress, completed]
     Download:
       type: object
@@ -882,3 +947,43 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
       required: [id, type, status]
+
+    Profile:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        avatar_url: { type: string }
+      required: [id, name]
+
+    Settings:
+      type: object
+      properties:
+        theme: { type: string, enum: [system, light, dark] }
+        adblock_enabled: { type: boolean }
+        keyboard_shortcuts: { type: object }
+      required: [theme, adblock_enabled]
+
+    BrowserHistoryEntry:
+      type: object
+      properties:
+        id: { type: string }
+        url: { type: string, format: uri }
+        title: { type: string }
+        visited_at: { type: string, format: date-time }
+      required: [id, url, title, visited_at]
+
+    FilterPreset:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        filters: { type: object }
+      required: [id, name, filters]
+
+    FilterPresetInput:
+      type: object
+      properties:
+        name: { type: string }
+        filters: { type: object }
+      required: [name, filters]

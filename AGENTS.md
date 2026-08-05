@@ -3,9 +3,8 @@
 Antes de qualquer ação:
 
 1. leia `docs/prompts/PROMPT.md`;
-2. leia `docs/megabrain/README.md` e os documentos indicados por ele;
-3. inspecione `git status`, branch atual e histórico;
-4. siga o workflow Git abaixo.
+2. inspecione `git status`, branch atual e histórico;
+3. siga o workflow Git abaixo.
 
 ## Escopo
 
@@ -103,7 +102,6 @@ Se houver mudanças pareadas no frontend, lembre-se que cada repositório tem se
 
 Uma tarefa só termina quando:
 
-- contrato, implementação, testes e MegaBrain estão coerentes;
 - todos os blocos foram mesclados na branch da feature e suas branches
   removidas;
 - a branch da feature foi mesclada localmente em `main`;
