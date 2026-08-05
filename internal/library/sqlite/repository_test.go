@@ -127,3 +127,32 @@ func TestRepository_Delete(t *testing.T) {
 		t.Fatalf("unfulfilled expectations: %s", err)
 	}
 }
+
+func TestRepository_SettingsAndFilterPresets(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %s", err)
+	}
+	defer db.Close()
+	repo := sqlite.NewRepository(db)
+	ctx := context.Background()
+
+	t.Run("GetSettings Default", func(t *testing.T) {
+		mock.ExpectQuery("SELECT value FROM settings WHERE key = 'app_settings'").
+			WillReturnError(sqlmock.ErrCancelled)
+		settings, err := repo.GetSettings(ctx)
+		if err == nil {
+			t.Errorf("expected error, got nil")
+		}
+		if settings != nil {
+			t.Errorf("expected nil settings on error")
+		}
+	})
+
+	t.Run("ListProfiles", func(t *testing.T) {
+		profiles, err := repo.ListProfiles(ctx)
+		if err != nil || len(profiles) == 0 {
+			t.Errorf("expected at least 1 default profile, got %v, err: %v", profiles, err)
+		}
+	})
+}

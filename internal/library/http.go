@@ -66,6 +66,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		r.Delete("/history/{chapterId}", h.DeleteHistory)
 		r.Get("/downloads", h.ListDownloads)
 		r.Delete("/downloads/{chapterId}", h.DeleteDownload)
+		r.Get("/profiles", h.ListProfiles)
+		r.Get("/settings", h.GetSettings)
+		r.Put("/settings", h.UpdateSettings)
+		r.Get("/browser/history", h.ListBrowserHistory)
+		r.Get("/filters/presets", h.ListFilterPresets)
+		r.Post("/filters/presets", h.CreateFilterPreset)
 	}
 }
 
@@ -410,4 +416,69 @@ func (h *Handler) GetMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpserver.RespondJSON(w, http.StatusOK, m)
+}
+
+func (h *Handler) ListProfiles(w http.ResponseWriter, r *http.Request) {
+	items, err := h.features.ListProfiles(r.Context())
+	if err != nil {
+		h.featureError(w, err)
+		return
+	}
+	httpserver.RespondJSON(w, http.StatusOK, items)
+}
+
+func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
+	item, err := h.features.GetSettings(r.Context())
+	if err != nil {
+		h.featureError(w, err)
+		return
+	}
+	httpserver.RespondJSON(w, http.StatusOK, item)
+}
+
+func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var s Settings
+	if err := httpserver.DecodeJSON(r, &s); err != nil {
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusBadRequest, Title: "Invalid Settings", Detail: err.Error()})
+		return
+	}
+	item, err := h.features.UpdateSettings(r.Context(), s)
+	if err != nil {
+		h.featureError(w, err)
+		return
+	}
+	httpserver.RespondJSON(w, http.StatusOK, item)
+}
+
+func (h *Handler) ListBrowserHistory(w http.ResponseWriter, r *http.Request) {
+	items, next, err := h.features.ListBrowserHistory(r.Context(), parseLimit(r), r.URL.Query().Get("cursor"))
+	if err != nil {
+		h.featureError(w, err)
+		return
+	}
+	setNextCursor(w, next)
+	httpserver.RespondJSON(w, http.StatusOK, items)
+}
+
+func (h *Handler) ListFilterPresets(w http.ResponseWriter, r *http.Request) {
+	items, err := h.features.ListFilterPresets(r.Context())
+	if err != nil {
+		h.featureError(w, err)
+		return
+	}
+	httpserver.RespondJSON(w, http.StatusOK, items)
+}
+
+func (h *Handler) CreateFilterPreset(w http.ResponseWriter, r *http.Request) {
+	var input FilterPresetInput
+	if err := httpserver.DecodeJSON(r, &input); err != nil || strings.TrimSpace(input.Name) == "" {
+		httpserver.RespondError(w, httpserver.Problem{Status: http.StatusBadRequest, Title: "Invalid Filter Preset", Detail: "name is required"})
+		return
+	}
+	item, err := h.features.CreateFilterPreset(r.Context(), strings.TrimSpace(input.Name), input.Filters)
+	if err != nil {
+		h.featureError(w, err)
+		return
+	}
+	httpserver.RespondJSON(w, http.StatusCreated, item)
 }

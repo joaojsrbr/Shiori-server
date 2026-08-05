@@ -230,3 +230,140 @@ func scanFeatureMedia(s rowScanner) (*library.Media, error) {
 	m.UpdatedAt, _ = time.Parse(time.RFC3339, updated)
 	return &m, nil
 }
+
+func (r *Repository) ListProfiles(ctx context.Context) ([]*library.Profile, error) {
+	return []*library.Profile{
+		{
+			ID:        "default",
+			Name:      "Default Profile",
+			AvatarURL: "",
+		},
+	}, nil
+}
+
+func (r *Repository) GetSettings(ctx context.Context) (*library.Settings, error) {
+	row := r.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'app_settings'`)
+	var val string
+	err := row.Scan(&val)
+	if err == sql.ErrNoRows {
+		return &library.Settings{
+			Theme:             "system",
+			AdblockEnabled:    true,
+			KeyboardShortcuts: map[string]any{},
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var s library.Settings
+	if err := json.Unmarshal([]byte(val), &s); err != nil {
+		return nil, err
+	}
+	if s.KeyboardShortcuts == nil {
+		s.KeyboardShortcuts = map[string]any{}
+	}
+	return &s, nil
+}
+
+func (r *Repository) UpdateSettings(ctx context.Context, s library.Settings) (*library.Settings, error) {
+	if s.Theme == "" {
+		s.Theme = "system"
+	}
+	if s.KeyboardShortcuts == nil {
+		s.KeyboardShortcuts = map[string]any{}
+	}
+	bytes, err := json.Marshal(s)
+	if err != nil {
+		return nil, err
+	}
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO settings (key, value) VALUES ('app_settings', ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, string(bytes))
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+func (r *Repository) ListBrowserHistory(ctx context.Context, limit int, cursor string) ([]*library.BrowserHistoryEntry, string, error) {
+	limit = pageLimit(limit)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, url, title, visited_at
+		FROM browser_history
+		WHERE (? = '' OR id < ?)
+		ORDER BY visited_at DESC, id DESC
+		LIMIT ?
+	`, cursor, cursor, limit+1)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+
+	items := []*library.BrowserHistoryEntry{}
+	for rows.Next() {
+		var item library.BrowserHistoryEntry
+		var visited string
+		if err := rows.Scan(&item.ID, &item.URL, &item.Title, &visited); err != nil {
+			return nil, "", err
+		}
+		item.VisitedAt, _ = time.Parse(time.RFC3339, visited)
+		items = append(items, &item)
+	}
+
+	next := ""
+	if len(items) > limit {
+		next = items[limit-1].ID
+		items = items[:limit]
+	}
+	return items, next, rows.Err()
+}
+
+func (r *Repository) ListFilterPresets(ctx context.Context) ([]*library.FilterPreset, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name, filters FROM filter_presets ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []*library.FilterPreset{}
+	for rows.Next() {
+		var item library.FilterPreset
+		var filtersJSON string
+		if err := rows.Scan(&item.ID, &item.Name, &filtersJSON); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(filtersJSON), &item.Filters)
+		if item.Filters == nil {
+			item.Filters = map[string]any{}
+		}
+		items = append(items, &item)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) CreateFilterPreset(ctx context.Context, name string, filters map[string]any) (*library.FilterPreset, error) {
+	if filters == nil {
+		filters = map[string]any{}
+	}
+	filtersJSON, err := json.Marshal(filters)
+	if err != nil {
+		return nil, err
+	}
+	id := library.NewULID()
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO filter_presets (id, name, filters, created_at)
+		VALUES (?, ?, ?, ?)
+	`, id, name, string(filtersJSON), now)
+	if err != nil {
+		return nil, err
+	}
+
+	return &library.FilterPreset{
+		ID:      id,
+		Name:    name,
+		Filters: filters,
+	}, nil
+}
