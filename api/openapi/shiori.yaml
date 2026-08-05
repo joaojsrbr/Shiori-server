@@ -76,6 +76,34 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
+        - name: title
+          in: query
+          description: Filter by media title
+          schema: { type: string }
+        - name: type
+          in: query
+          description: Filter by media types
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, enum: [manga, manhwa, comic, novel, anime, unknown] }
+        - name: status
+          in: query
+          description: Filter by media statuses
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, enum: [ongoing, completed, hiatus, cancelled, unknown] }
+        - name: genres
+          in: query
+          description: Filter by media genres
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string }
       responses:
         '200':
           description: A list of media items
