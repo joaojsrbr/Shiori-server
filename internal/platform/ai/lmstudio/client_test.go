@@ -12,13 +12,13 @@ import (
 
 func TestClient_ListModels(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" {
+		if r.URL.Path != "/api/v1/models" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 
 		response := map[string]interface{}{
-			"data": []map[string]string{
+			"models": []map[string]string{
 				{"id": "nuextract3@q4_k_m", "object": "model"},
 			},
 		}

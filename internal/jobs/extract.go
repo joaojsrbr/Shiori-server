@@ -95,9 +95,9 @@ func stripNoisyTags(htmlStr, baseURL string) (string, string) {
 		// "form": true, "input": true, "select": true, "option": true, "textarea": true,
 		// "dialog": true, "canvas": true, "map": true, "area": true, "aside": true,
 		// "script": true,
-		"style": true, "noscript": true,
+		"style": true, "noscript": true, "nav": true,
 		// "svg": true, "path": true,
-		// "iframe": true, "nav": true, "footer": true, "header": true,
+		// "iframe": true, "footer": true, "header": true,
 		// "link": true, "meta": true, "button": true,
 		// "picture": true, "source": true,
 	}
