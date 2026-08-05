@@ -132,7 +132,7 @@ func (p *Pool) processJob(ctx context.Context, job *queue.Job, workerID int) {
 				return
 			case <-ticker.C:
 				current, err := p.q.Status(context.Background(), job.ID)
-				if err == nil && current.Status == queue.StatusCancelled {
+				if err == nil && current != nil && current.Status == queue.StatusCancelled {
 					cancel()
 					return
 				}
@@ -144,7 +144,7 @@ func (p *Pool) processJob(ctx context.Context, job *queue.Job, workerID int) {
 	close(done)
 	cancel()
 	current, statusErr := p.q.Status(context.Background(), job.ID)
-	if statusErr == nil && current.Status == queue.StatusCancelled {
+	if statusErr == nil && current != nil && current.Status == queue.StatusCancelled {
 		log.Info("job cancelled")
 		return
 	}
