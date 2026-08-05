@@ -1,0 +1,59 @@
+name: Release Shiori Server
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build Executable and Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Run Go Vet and Tests
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Extract Tag Version
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Build Portable Windows Executable
+        run: |
+          chmod +x scripts/build.sh
+          SHIORI_VERSION="${{ env.VERSION }}" ./scripts/build.sh
+
+      - name: Generate Checksum
+        run: |
+          cd dist
+          sha256sum shiori-server.exe > shiori-server.exe.sha256
+
+      - name: Create GitHub Release and Upload Artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/shiori-server.exe
+            dist/shiori-server.exe.sha256
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
